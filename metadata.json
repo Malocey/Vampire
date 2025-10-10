@@ -1,0 +1,7 @@
+{
+  "name": "Vampire System Akademie",
+  "description": "Ein webbasiertes Rollenspiel, das in einer futuristischen Militärakademie spielt, in der der Spieler heimlich Vampirfähigkeiten entwickelt.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
