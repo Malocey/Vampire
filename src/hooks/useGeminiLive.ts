@@ -415,7 +415,8 @@ export const useGeminiLive = () => {
         inputAudioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
         outputAudioContextRef.current = new window.AudioContext({ sampleRate: 24000 });
 
-        let dynamicSystemInstruction = SYSTEM_INSTRUCTION;
+        const fullTranscript = initialPlayerData.transcript.map(t => `${t.speaker}: ${t.text}`).join('\n');
+        let dynamicSystemInstruction = `${SYSTEM_INSTRUCTION}\n\n**Bisheriger Gesprächsverlauf:**\n${fullTranscript}`;
         
         const npcCodex = initialPlayerData.codex.filter(c => c.category === 'Personen' && c.voice);
         if (npcCodex.length > 0) {
