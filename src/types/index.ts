@@ -66,7 +66,10 @@ export type PrebuiltVoice =
     | 'Laomedeia' | 'Achernar' | 'Alnilam'
     | 'Schedar' | 'Gacrux' | 'Pulcherrima'
     | 'Achird' | 'Zubenelgenubi' | 'Vindemiatrix'
-    | 'Sadachbia' | 'Sadaltager' | 'Sulafat';
+    | 'Sadachbia' | 'Sadaltager' | 'Sulafat'
+    | 'Echo' | 'Onyx' | 'Nova' | 'Shimmer' | 'Luna' | 'Comet' | 'Jupiter'
+    | 'WaveNet-A' | 'WaveNet-B' | 'WaveNet-C' | 'WaveNet-D' | 'WaveNet-E'
+    | 'WaveNet-F' | 'WaveNet-G' | 'WaveNet-H' | 'WaveNet-I' | 'WaveNet-J';
 
 export interface VoiceProfile {
     voiceName: PrebuiltVoice;

@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { usePlayerStore } from './usePlayerStore';
+import { usePlayerStore } from '../store/usePlayerStore';
 import { ai } from '../config/api';
-import { Quest, PlayerData, Type, TranscriptEntry } from '../types';
+import { Quest, PlayerData, TranscriptEntry } from '../types';
 import { useApiStatusStore } from '../store/useApiStatusStore';
 import { isQuotaError } from '../utils/errorUtils';
+import { Type } from '@google/genai';
 
 export const useQuestGenerator = () => {
     const { playerData, setPlayerData } = usePlayerStore();

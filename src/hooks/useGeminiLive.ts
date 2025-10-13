@@ -6,10 +6,10 @@ import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, Cod
 import { usePlayerStore } from '../store/usePlayerStore';
 import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
 import { useApiStatusStore } from '../store/useApiStatusStore';
-import { Howl } from 'howler';
 import { isQuotaError } from '../utils/errorUtils';
 import { INITIAL_MAP_DATA } from '../config/mapData';
 import { parseSpeechCommands } from '../utils/speechParser';
+import { Howl } from 'howler';
 import { SFX_CONFIG, MUSIC_CONFIG } from '../config/soundConfig';
 import { getCachedAudio, cacheAudio } from '../utils/audioCache';
 
@@ -70,34 +70,6 @@ function usePrevious<T>(value: T): T | undefined {
   });
   return ref.current;
 }
-
-
-const getVoiceForText = (text: string): VoiceProfile => {
-    const textLower = text.toLowerCase();
-
-    // 1. Check for emotional cues in parentheses, e.g., (Screaming)
-    const emotionalMatch = text.match(/\((.*?)\)/);
-    if (emotionalMatch) {
-        const emotion = emotionalMatch[1];
-        const key = emotion.charAt(0).toUpperCase() + emotion.slice(1).toLowerCase();
-        if (key in EMOTIONAL_VOICES) {
-            const emotionalVoice = EMOTIONAL_VOICES[key];
-            const baseVoice = getVoiceForText(text.replace(emotionalMatch[0], ''));
-            return { ...baseVoice, ...emotionalVoice };
-        }
-    }
-
-    // 2. Check for character names in quotes or at the start of a line
-    for (const character in CHARACTER_VOICES) {
-        const regex = new RegExp(`^"${character}":|${character}:`, 'i');
-        if (regex.test(text)) {
-            return CHARACTER_VOICES[character];
-        }
-    }
-
-    // 3. Default to narrator voice
-    return NARRATOR_VOICE;
-};
 
 export const useGeminiLive = () => {
     const { playerData, setPlayerData, updateTranscript } = usePlayerStore();
