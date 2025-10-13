@@ -68,6 +68,12 @@ export type PrebuiltVoice =
     | 'Achird' | 'Zubenelgenubi' | 'Vindemiatrix'
     | 'Sadachbia' | 'Sadaltager' | 'Sulafat';
 
+export interface VoiceProfile {
+    voiceName: PrebuiltVoice;
+    seed: number;
+    temperature: number;
+}
+
 export interface CodexEntry {
     id: string;
     title: string;
@@ -75,7 +81,7 @@ export interface CodexEntry {
     content: string;
     keywords: string[];
     unlocked: boolean;
-    voice?: PrebuiltVoice;
+    voice?: VoiceProfile;
 }
 
 export interface MapLocation {

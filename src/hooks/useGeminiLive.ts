@@ -2,11 +2,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob, Type } from '@google/genai';
 import { ai, SYSTEM_INSTRUCTION } from '../config/api';
 import { VOICE_CHARACTERISTICS } from '../config/gameConfig';
-import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, CodexEntry, PrebuiltVoice, API_MODULES } from '../types';
+import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, CodexEntry, PrebuiltVoice, API_MODULES, VoiceProfile } from '../types';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
 import { useApiStatusStore } from '../store/useApiStatusStore';
 import { isQuotaError } from '../utils/errorUtils';
 import { INITIAL_MAP_DATA } from '../config/mapData';
+import { parseSpeechCommands } from '../utils/speechParser';
 
 function encode(bytes: Uint8Array) {
   let binary = '';
@@ -66,6 +68,33 @@ function usePrevious<T>(value: T): T | undefined {
   return ref.current;
 }
 
+
+const getVoiceForText = (text: string): VoiceProfile => {
+    const textLower = text.toLowerCase();
+
+    // 1. Check for emotional cues in parentheses, e.g., (Screaming)
+    const emotionalMatch = text.match(/\((.*?)\)/);
+    if (emotionalMatch) {
+        const emotion = emotionalMatch[1];
+        const key = emotion.charAt(0).toUpperCase() + emotion.slice(1).toLowerCase();
+        if (key in EMOTIONAL_VOICES) {
+            const emotionalVoice = EMOTIONAL_VOICES[key];
+            const baseVoice = getVoiceForText(text.replace(emotionalMatch[0], ''));
+            return { ...baseVoice, ...emotionalVoice };
+        }
+    }
+
+    // 2. Check for character names in quotes or at the start of a line
+    for (const character in CHARACTER_VOICES) {
+        const regex = new RegExp(`^"${character}":|${character}:`, 'i');
+        if (regex.test(text)) {
+            return CHARACTER_VOICES[character];
+        }
+    }
+
+    // 3. Default to narrator voice
+    return NARRATOR_VOICE;
+};
 
 export const useGeminiLive = () => {
     const { playerData, setPlayerData, updateTranscript } = usePlayerStore();
@@ -422,9 +451,9 @@ export const useGeminiLive = () => {
         if (npcCodex.length > 0) {
             let voiceProfiles = '\n\n-- Spezifische NPC-Stimmprofile --\n';
             npcCodex.forEach(npc => {
-                 if (npc.voice && VOICE_CHARACTERISTICS[npc.voice]) {
-                    const characteristic = VOICE_CHARACTERISTICS[npc.voice];
-                    voiceProfiles += `- **${npc.title} (Stimme '${npc.voice}'):** Nutze eine Stimme, die '${characteristic}' ist. Deine Darstellung muss den Charakterdetails entsprechen: "${npc.content}"\n`;
+                 if (npc.voice && VOICE_CHARACTERISTICS[npc.voice.voiceName]) {
+                    const characteristic = VOICE_CHARACTERISTICS[npc.voice.voiceName];
+                    voiceProfiles += `- **${npc.title} (Stimme '${npc.voice.voiceName}'):** Nutze eine Stimme, die '${characteristic}' ist. Deine Darstellung muss den Charakterdetails entsprechen: "${npc.content}"\n`;
                  }
             });
             dynamicSystemInstruction += voiceProfiles;
@@ -477,7 +506,6 @@ export const useGeminiLive = () => {
                         isListeningRef.current = false;
                         setSuggestions([]);
                     }
-
                     if (message.serverContent?.inputTranscription) {
                         const textChunk = message.serverContent.inputTranscription.text;
                         updateTranscript(prev => {
@@ -505,44 +533,57 @@ export const useGeminiLive = () => {
                     }
 
                     if (message.serverContent?.turnComplete) {
-                        if (!isPausedRef.current) {
-                           setIsListening(true);
-                           isListeningRef.current = true;
-                        }
-                        const currentTranscript = usePlayerStore.getState().playerData?.transcript || [];
-                        const lastTurn = currentTranscript.slice(-2);
-                        const lastModelResponse = lastTurn.find(e => e.speaker === 'model')?.text;
-                        if (lastModelResponse) {
+                        const { transcript: currentTranscript, playerData: currentPlayerData } = usePlayerStore.getState();
+                        const lastModelResponse = currentTranscript.find(e => e.speaker === 'model')?.text;
+
+                        if (lastModelResponse && currentPlayerData) {
+                            const speechJobs = parseSpeechCommands(lastModelResponse);
+                            const session = await sessionPromiseRef.current;
+
+                            for (const job of speechJobs) {
+                                session?.sendRealtimeInput({
+                                    text: job.text,
+                                    speechConfig: {
+                                        voiceConfig: { prebuiltVoiceConfig: job.voiceProfile },
+                                    },
+                                });
+                            }
+
                             processModelResponse(lastModelResponse);
 
-                            const currentNpcCodex = usePlayerStore.getState().playerData?.codex.filter(c => c.category === 'Personen') || [];
-                            for(const npc of currentNpcCodex) {
-                                if(new RegExp(`\\b${npc.title.split(' ')[1]}\\b`, 'i').test(lastModelResponse)) {
+                            const lastTurn = currentTranscript.slice(-2);
+                            const npcCodex = currentPlayerData.codex.filter(c => c.category === 'Personen');
+                            for (const npc of npcCodex) {
+                                if (new RegExp(`\\b${npc.title.split(' ')[1]}\\b`, 'i').test(lastModelResponse)) {
                                     updateNpcMemory(lastTurn, npc);
                                     break;
                                 }
                             }
+                        }
+
+                        if (!isPausedRef.current) {
+                            setIsListening(true);
+                            isListeningRef.current = true;
                         }
                     }
 
                     const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
                     if (audioData && outputAudioContextRef.current && !isMuted) {
                         const outputCtx = outputAudioContextRef.current;
-                        nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-
                         const audioBuffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
-
                         const source = outputCtx.createBufferSource();
                         source.buffer = audioBuffer;
                         source.connect(outputCtx.destination);
                         
+                        const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
+                        source.start(startTime);
+
+                        nextStartTimeRef.current = startTime + audioBuffer.duration;
+                        audioSourcesRef.current.add(source);
+
                         source.addEventListener('ended', () => {
                             audioSourcesRef.current.delete(source);
                         });
-
-                        source.start(nextStartTimeRef.current);
-                        nextStartTimeRef.current += audioBuffer.duration;
-                        audioSourcesRef.current.add(source);
                     }
                 },
                 onerror: (e: ErrorEvent) => {
@@ -558,7 +599,7 @@ export const useGeminiLive = () => {
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+                    voiceConfig: { prebuiltVoiceConfig: NARRATOR_VOICE },
                 },
                 inputAudioTranscription: {},
                 outputAudioTranscription: {},
