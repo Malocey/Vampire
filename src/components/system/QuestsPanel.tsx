@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { Quest, QuestStatus } from '../../types';
+import { usePlayerStore } from '../../store/usePlayerStore';
 
 interface QuestsPanelProps {
-    quests: Quest[];
     onGenerateQuest: (type: string) => void;
     isLoading: boolean;
 }
 
-export const QuestsPanel = ({ quests, onGenerateQuest, isLoading }: QuestsPanelProps) => {
+export const QuestsPanel = ({ onGenerateQuest, isLoading }: QuestsPanelProps) => {
+    const { playerData } = usePlayerStore();
+    const quests = playerData?.quests || [];
+    
     const [selectedQuestId, setSelectedQuestId] = useState<string | null>(quests[0]?.id || null);
     const [activeFilter, setActiveFilter] = useState<QuestStatus | 'board'>('active');
 
@@ -21,7 +24,11 @@ export const QuestsPanel = ({ quests, onGenerateQuest, isLoading }: QuestsPanelP
             <div className="quest-objectives">
                 <h4>Ziele:</h4>
                 <ul>
-                    {quest.objectives.map((obj, i) => <li key={i}>{obj}</li>)}
+                    {quest.objectives.map((obj, i) => (
+                        <li key={i} className={obj.completed ? 'completed' : ''}>
+                            {obj.text}
+                        </li>
+                    ))}
                 </ul>
             </div>
             <div className="quest-rewards">
@@ -46,6 +53,8 @@ export const QuestsPanel = ({ quests, onGenerateQuest, isLoading }: QuestsPanelP
             </div>
         </div>
     );
+    
+    if (!playerData) return null;
 
     return (
         <div className="quests-panel">

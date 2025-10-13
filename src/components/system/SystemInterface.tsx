@@ -1,46 +1,64 @@
 import React, { useState } from 'react';
 import { Type } from "@google/genai";
-import { PlayerData, Quest, TabName } from '../../types';
+import { Quest, TabName, CodexEntry, MapLocation } from '../../types';
 import { ai } from '../../config/api';
+import { usePlayerStore } from '../../store/usePlayerStore';
+import { useApiStatusStore } from '../../store/useApiStatusStore';
+import { isQuotaError } from '../../utils/errorUtils';
 import { CharacterPanel } from './CharacterPanel';
 import { QuestsPanel } from './QuestsPanel';
 import { SkillTreePanel } from './SkillTreePanel';
 import { InventoryPanel } from './InventoryPanel';
 import { ReputationPanel } from './ReputationPanel';
+import { DatenbankPanel } from './DatenbankPanel';
+import { KartePanel } from './KartePanel';
+import { ChronikPanel } from './ChronikPanel';
+import { ApiStatusPanel } from './ApiStatusPanel';
+
 
 interface SystemInterfaceProps {
-    playerData: PlayerData;
-    onUpdatePlayerData: (data: PlayerData) => void;
     isQuestLoading: boolean;
     setIsQuestLoading: (isLoading: boolean) => void;
+    className?: string;
 }
 
-export const SystemInterface = ({ playerData, onUpdatePlayerData, isQuestLoading, setIsQuestLoading }: SystemInterfaceProps) => {
+export const SystemInterface = ({ isQuestLoading, setIsQuestLoading, className }: SystemInterfaceProps) => {
+    const { playerData, setPlayerData } = usePlayerStore();
+    const { setModuleStatus } = useApiStatusStore();
     const [activeTab, setActiveTab] = useState<TabName>('Charakter');
     
     const handleGenerateQuest = async (questType: string) => {
+        if (!playerData) return;
+        
         setIsQuestLoading(true);
-        const questPools = {
-            locations: ['Bibliotheksarchive', 'Trainingsarenen', 'Untere Ebenen', 'Medizinische Abteilung', 'Stadtsektor 3'],
-            npcs: ['Ausbilder Graves', 'Kadettin Anya', 'Archivar Lyra', 'Sicherheitschef Thorne', 'Dr. Alistair'],
-            items: ['Datenchip', 'Blutprobe', 'Antikes Arteakt', 'Sicherheits-Keycard', 'Synthetisches Blutpaket'],
-            enemies: ['Korrumpiertes Sicherheitssystem', 'Abtrünniger Vampir', 'Untergrund-Bestie', 'Gepanzerte Wache']
+
+        const context = {
+            name: playerData.name,
+            level: playerData.level,
+            stats: playerData.stats,
+            bloodlineLevel: playerData.bloodlineLevel,
+            inventory: playerData.inventory.map(i => i.name),
+            activeQuests: playerData.quests.filter(q => q.status === 'active').map(q => q.title),
+            completedQuests: playerData.quests.filter(q => q.status === 'completed').map(q => q.title),
+            unlockedCodexTitles: playerData.codex.filter(c => c.unlocked).map(c => c.title),
+            discoveredMapLocations: playerData.mapData.filter(m => m.discovered).map(m => m.name),
         };
 
         const prompt = `
-            Du bist ein Quest-Generator für das Text-Rollenspiel 'Crimson Academy: The Awakened Blood'.
-            Der Spieler ist auf Level ${playerData.level}.
-            Generiere eine einzelne, wiederholbare Nebenquest basierend auf den folgenden Parametern.
-            Die Quest sollte in das dunkle, futuristische Vampir-Thema passen.
+            Du bist ein dynamischer Quest-Designer für das Rollenspiel 'Crimson Academy: The Awakened Blood'.
+            Basierend auf dem aktuellen Spielfortschritt des Spielers, generiere eine neue, thematisch passende Nebenquest.
 
-            Quest-Typ: ${questType}
-            Verfügbare Datenpools zur Inspiration:
-            - Orte: ${questPools.locations.join(', ')}
-            - NPCs: ${questPools.npcs.join(', ')}
-            - Gegenstände: ${questPools.items.join(', ')}
-            - Gegner: ${questPools.enemies.join(', ')}
-            
-            Die Beschreibung und Ziele sollten kurz sein (jeweils 1-2 Sätze). Der Titel sollte thematisch sein. Die Belohnungen sollten dem Spielerlevel angemessen sein.
+            Spielerkontext:
+            ${JSON.stringify(context, null, 2)}
+
+            Anforderungen:
+            1.  **Quest-Typ:** Generiere eine Quest, die zum Typ "${questType}" passt (z.B. Sammelmission, Eliminierungsmission, Untersuchungsmission).
+            2.  **Relevanz:** Die Quest muss sich organisch in die Welt einfügen und den Fortschritt des Spielers berücksichtigen. Vermeide Quests, die bereits abgeschlossenen ähneln. Der Titel sollte KEINE Präfixe wie '[Nebenquest]' enthalten.
+            3.  **Welt-Erweiterung:** Wenn die Quest eine neue Person, einen neuen Ort oder neue Lore einführt, die der Spieler noch nicht kennt, erstelle entsprechende Datenbank- (Codex) und Karteneinträge.
+            4.  **IDs:** Generiere einzigartige, sprechende IDs im Format \`präfix_name_in_snake_case\` (z.B., 'npc_john_doe', 'loc_alte_ruinen').
+            5.  **Koordinaten:** Neue Orte benötigen plausible prozentuale Koordinaten (x, y zwischen 0 und 100), die nicht mit existierenden Orten kollidieren.
+            6.  **Belohnungen:** Die Belohnungen (XP, Essenz, Items) müssen dem Level des Spielers angemessen sein.
+            7.  **Format:** Halte dich strikt an das unten definierte JSON-Schema. Gib keine zusätzlichen Texte oder Erklärungen aus.
         `;
 
         try {
@@ -52,36 +70,106 @@ export const SystemInterface = ({ playerData, onUpdatePlayerData, isQuestLoading
                     responseSchema: {
                         type: Type.OBJECT,
                         properties: {
-                            title: { type: Type.STRING },
-                            description: { type: Type.STRING },
-                            objectives: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            rewards: {
+                            quest: {
                                 type: Type.OBJECT,
                                 properties: {
-                                    xp: { type: Type.INTEGER },
-                                    item: { type: Type.STRING },
-                                    essence: { type: Type.INTEGER }
+                                    title: { type: Type.STRING },
+                                    description: { type: Type.STRING },
+                                    objectives: { type: Type.ARRAY, items: { type: Type.STRING } },
+                                    rewards: {
+                                        type: Type.OBJECT,
+                                        properties: {
+                                            xp: { type: Type.INTEGER },
+                                            item: { type: Type.STRING },
+                                            essence: { type: Type.INTEGER }
+                                        },
+                                        required: ['xp']
+                                    },
+                                    locationId: { type: Type.STRING }
                                 },
-                                required: ['xp']
+                                required: ['title', 'description', 'objectives', 'rewards']
+                            },
+                            newCodexEntries: {
+                                type: Type.ARRAY,
+                                items: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                        id: { type: Type.STRING },
+                                        title: { type: Type.STRING },
+                                        category: { type: Type.STRING, enum: ['Personen', 'Orte', 'Fraktionen', 'Lore'] },
+                                        content: { type: Type.STRING },
+                                        keywords: { type: Type.ARRAY, items: { type: Type.STRING } }
+                                    },
+                                    required: ['id', 'title', 'category', 'content', 'keywords']
+                                }
+                            },
+                            newMapLocations: {
+                                type: Type.ARRAY,
+                                items: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                        id: { type: Type.STRING },
+                                        name: { type: Type.STRING },
+                                        description: { type: Type.STRING },
+                                        coordinates: {
+                                            type: Type.OBJECT,
+                                            properties: {
+                                                x: { type: Type.NUMBER },
+                                                y: { type: Type.NUMBER }
+                                            },
+                                            required: ['x', 'y']
+                                        },
+                                        keywords: { type: Type.ARRAY, items: { type: Type.STRING } }
+                                    },
+                                    required: ['id', 'name', 'description', 'coordinates', 'keywords']
+                                }
                             }
                         },
-                        required: ['title', 'description', 'objectives', 'rewards']
+                        required: ['quest']
                     }
                 }
             });
 
             const generatedData = JSON.parse(response.text);
+            const newPlayerData = JSON.parse(JSON.stringify(playerData));
+
+            const questData = generatedData.quest;
             const newQuest: Quest = {
                 id: `sq-${Date.now()}`,
-                ...generatedData,
+                title: `[Nebenquest] ${questData.title}`,
+                description: questData.description,
+                objectives: questData.objectives.map((text: string) => ({ text, completed: false })),
+                rewards: questData.rewards,
                 status: 'active',
                 type: 'side',
+                locationId: questData.locationId,
             };
+            newPlayerData.quests.push(newQuest);
+
+            if (generatedData.newCodexEntries && generatedData.newCodexEntries.length > 0) {
+                generatedData.newCodexEntries.forEach((entry: CodexEntry) => {
+                    if (!newPlayerData.codex.some((e: CodexEntry) => e.id === entry.id)) {
+                        newPlayerData.codex.push({ ...entry, unlocked: true });
+                    }
+                });
+            }
             
-            onUpdatePlayerData({ ...playerData, quests: [...playerData.quests, newQuest] });
+            if (generatedData.newMapLocations && generatedData.newMapLocations.length > 0) {
+                 generatedData.newMapLocations.forEach((loc: MapLocation) => {
+                    if (!newPlayerData.mapData.some((m: MapLocation) => m.id === loc.id)) {
+                        newPlayerData.mapData.push({ ...loc, discovered: true });
+                    }
+                });
+            }
+            
+            setPlayerData(newPlayerData);
 
         } catch (error) {
-            console.error("Error generating side quest:", error);
+            if (isQuotaError(error)) {
+                setModuleStatus('quests', 'unavailable');
+            } else {
+                console.error("Error generating dynamic side quest:", error);
+            }
         } finally {
             setIsQuestLoading(false);
         }
@@ -89,25 +177,23 @@ export const SystemInterface = ({ playerData, onUpdatePlayerData, isQuestLoading
 
     const renderPanel = () => {
         switch (activeTab) {
-            case 'Charakter':
-                return <CharacterPanel data={playerData} />;
-            case 'Quests':
-                return <QuestsPanel quests={playerData.quests} onGenerateQuest={handleGenerateQuest} isLoading={isQuestLoading} />;
-            case 'Fähigkeiten':
-                return <SkillTreePanel playerData={playerData} onUpdatePlayerData={onUpdatePlayerData} />;
-            case 'Inventar':
-                return <InventoryPanel playerData={playerData} />;
-            case 'Ruf':
-                return <ReputationPanel />;
-            default:
-                return null;
+            case 'Charakter': return <CharacterPanel />;
+            case 'Quests': return <QuestsPanel onGenerateQuest={handleGenerateQuest} isLoading={isQuestLoading} />;
+            case 'Fähigkeiten': return <SkillTreePanel />;
+            case 'Inventar': return <InventoryPanel />;
+            case 'Datenbank': return <DatenbankPanel />;
+            case 'Karte': return <KartePanel />;
+            case 'Ruf': return <ReputationPanel />;
+            case 'Chronik': return <ChronikPanel />;
+            case 'Systemstatus': return <ApiStatusPanel />;
+            default: return null;
         }
     };
 
-    const tabs: TabName[] = ['Charakter', 'Quests', 'Fähigkeiten', 'Inventar', 'Ruf'];
+    const tabs: TabName[] = ['Charakter', 'Quests', 'Fähigkeiten', 'Inventar', 'Datenbank', 'Karte', 'Ruf', 'Chronik', 'Systemstatus'];
 
     return (
-        <div className="system-interface">
+        <div className={`system-interface ${className || ''}`}>
             <div className="tabs">
                 {tabs.map(tabName => (
                     <button

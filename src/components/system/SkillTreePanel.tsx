@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { PlayerData, Skill } from '../../types';
+import { Skill } from '../../types';
+import { usePlayerStore } from '../../store/usePlayerStore';
 
-interface SkillTreePanelProps {
-    playerData: PlayerData;
-    onUpdatePlayerData: (data: PlayerData) => void;
-}
-
-export const SkillTreePanel = ({ playerData, onUpdatePlayerData }: SkillTreePanelProps) => {
+export const SkillTreePanel = () => {
+    const { playerData, setPlayerData } = usePlayerStore();
     const [hoveredSkill, setHoveredSkill] = useState<Skill | null>(null);
+
+    if (!playerData) return null;
 
     const getSkillStatus = (skill: Skill) => {
         if (skill.unlocked) return 'unlocked';
@@ -31,7 +30,7 @@ export const SkillTreePanel = ({ playerData, onUpdatePlayerData }: SkillTreePane
             if (skill.cost.bloodEssence) {
                 newPlayerData.bloodEssence -= skill.cost.bloodEssence;
             }
-            onUpdatePlayerData(newPlayerData);
+            setPlayerData(newPlayerData);
         } else if (status === 'locked') {
             console.log("Cannot unlock skill: prerequisites not met or not enough resources.");
         }
@@ -49,7 +48,8 @@ export const SkillTreePanel = ({ playerData, onUpdatePlayerData }: SkillTreePane
             let refundedEssence = 0;
             const newSkillTree = { ...playerData.skillTree };
 
-            Object.values(newSkillTree).forEach(skill => {
+            // Fix: Explicitly type skill as Skill to resolve properties on unknown type
+            Object.values(newSkillTree).forEach((skill: Skill) => {
                 if (skill.unlocked) {
                     refundedPoints += skill.cost.skillPoints;
                     refundedEssence += skill.cost.bloodEssence || 0;
@@ -57,7 +57,7 @@ export const SkillTreePanel = ({ playerData, onUpdatePlayerData }: SkillTreePane
                 }
             });
 
-            onUpdatePlayerData({
+            setPlayerData({
                 ...playerData,
                 skillPoints: playerData.skillPoints + refundedPoints,
                 bloodEssence: playerData.bloodEssence + refundedEssence - resetCost,
@@ -66,7 +66,8 @@ export const SkillTreePanel = ({ playerData, onUpdatePlayerData }: SkillTreePane
         }
     };
 
-    const tree = Object.values(playerData.skillTree);
+    // Fix: Explicitly type tree as Skill[] to resolve properties on unknown type in map functions
+    const tree: Skill[] = Object.values(playerData.skillTree);
 
     return (
         <div className="skill-tree-panel">

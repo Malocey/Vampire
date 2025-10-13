@@ -4,3 +4,7 @@ export * from './QuestsPanel';
 export * from './ReputationPanel';
 export * from './SkillTreePanel';
 export * from './SystemInterface';
+export * from './DatenbankPanel';
+export * from './KartePanel';
+export * from './ChronikPanel';
+export * from './ApiStatusPanel';

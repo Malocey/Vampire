@@ -1,9 +1,17 @@
+// Fix: Removed an invalid import for 'LiveSession' which is not exported by '@google/genai'.
+
 export interface PlayerStats {
     strength: number;
     agility: number;
     endurance: number;
     intelligence: number;
     charisma: number;
+}
+
+export interface QuestObjective {
+    text: string;
+    completed: boolean;
+    trigger?: string; // e.g., "visit:loc_id", "obtain:item_id", "talk:npc_id"
 }
 
 export type QuestStatus = 'active' | 'completed' | 'failed';
@@ -13,7 +21,7 @@ export interface Quest {
     id: string;
     title: string;
     description: string;
-    objectives: string[];
+    objectives: QuestObjective[];
     rewards: {
         xp: number;
         item?: string;
@@ -21,6 +29,7 @@ export interface Quest {
     };
     status: QuestStatus;
     type: QuestType;
+    locationId?: string; // Link to a map location
 }
 
 export interface Skill {
@@ -47,9 +56,41 @@ export interface InventoryItem {
     quantity: number;
 }
 
+export type PrebuiltVoice = 
+    | 'Zephyr' | 'Puck' | 'Charon'
+    | 'Kore' | 'Fenrir' | 'Leda'
+    | 'Orus' | 'Aoede' | 'Callirrhoe'
+    | 'Autonoe' | 'Enceladus' | 'Iapetus'
+    | 'Umbriel' | 'Algieba' | 'Despina'
+    | 'Erinome' | 'Algenib' | 'Rasalgethi'
+    | 'Laomedeia' | 'Achernar' | 'Alnilam'
+    | 'Schedar' | 'Gacrux' | 'Pulcherrima'
+    | 'Achird' | 'Zubenelgenubi' | 'Vindemiatrix'
+    | 'Sadachbia' | 'Sadaltager' | 'Sulafat';
+
+export interface CodexEntry {
+    id: string;
+    title: string;
+    category: 'Personen' | 'Orte' | 'Fraktionen' | 'Lore';
+    content: string;
+    keywords: string[];
+    unlocked: boolean;
+    voice?: PrebuiltVoice;
+}
+
+export interface MapLocation {
+    id: string;
+    name: string;
+    description: string;
+    coordinates: { x: number; y: number }; // as percentages
+    keywords: string[];
+    discovered: boolean;
+}
+
 export interface PlayerData {
     name: string;
     level: number;
+    currentHealth: number;
     stats: PlayerStats;
     bloodlineLevel: number;
     bloodlineName: string;
@@ -65,12 +106,58 @@ export interface PlayerData {
     quests: Quest[];
     skillTree: SkillTree;
     inventory: InventoryItem[];
+    codex: CodexEntry[];
+    mapData: MapLocation[];
+    transcript: TranscriptEntry[];
+    npcMemories: { [npcId: string]: string; };
 }
 
-export type TabName = 'Charakter' | 'Quests' | 'Fähigkeiten' | 'Inventar' | 'Ruf';
+export type TabName = 'Charakter' | 'Quests' | 'Fähigkeiten' | 'Inventar' | 'Datenbank' | 'Karte' | 'Ruf' | 'Chronik' | 'Systemstatus';
 export type GameState = 'intro' | 'creation' | 'game';
 
 export interface TranscriptEntry {
     speaker: 'user' | 'model' | 'system';
     text: string;
+}
+
+export type SuggestionCategory = 'Untersuchung' | 'Dialog' | 'Aktion';
+
+export interface CategorizedSuggestion {
+    text: string;
+    category: SuggestionCategory;
+}
+
+// Zustand Player Store Type
+export interface PlayerState {
+    playerData: PlayerData | null;
+    gameState: GameState;
+    saveFileExists: boolean;
+    isQuestLoading: boolean;
+    setPlayerData: (data: PlayerData) => void;
+    setGameState: (state: GameState) => void;
+    setIsQuestLoading: (isLoading: boolean) => void;
+    checkSaveFile: () => void;
+    loadPlayer: () => void;
+    createNewPlayer: (isQuickStart: boolean) => void;
+    initializePlayer: (data: PlayerData) => void;
+    updateTranscript: (updater: (prev: TranscriptEntry[]) => TranscriptEntry[]) => void;
+}
+
+// Zustand API Status Store Types
+export const API_MODULES = {
+    live: "Echtzeit-Sprachmodul",
+    narrative: "Narrativ-Modul",
+    suggestions: "Vorschlags-Modul",
+    memory: "NSC-Gedächtnismodul",
+    quests: "Quest-Generator",
+    chronicle: "Chronik-Generator",
+} as const;
+
+export type ApiModule = keyof typeof API_MODULES;
+export type ApiStatus = 'operational' | 'degraded' | 'unavailable';
+
+export interface ApiStatusState {
+    status: Record<ApiModule, ApiStatus>;
+    setModuleStatus: (module: ApiModule, status: ApiStatus) => void;
+    resetAllStatus: () => void;
 }

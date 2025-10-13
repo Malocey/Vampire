@@ -1,4 +1,4 @@
-import { PlayerStats, Quest, SkillTree } from "../types";
+import { PlayerStats, Quest, SkillTree, PrebuiltVoice } from "../types";
 
 export const BASE_STATS: PlayerStats = { strength: 8, agility: 8, endurance: 8, intelligence: 8, charisma: 8 };
 export const ATTRIBUTE_POINTS_POOL = 10;
@@ -16,12 +16,49 @@ export const APPEARANCE_LABELS: { [key: string]: string } = {
     skinTone: 'Hautton',
     clothing: 'Kleidung',
 };
+
+export const VOICE_CHARACTERISTICS: Record<PrebuiltVoice, string> = {
+    'Zephyr': 'Hell',
+    'Puck': 'Upbeat',
+    'Charon': 'Informativ',
+    'Kore': 'Klar, präzise und leicht kühl',
+    'Fenrir': 'Leicht nervös, aber bestimmt',
+    'Leda': 'Jugendlich',
+    'Orus': 'Unternehmen',
+    'Aoede': 'Breezy',
+    'Callirrhoe': 'Gelassen',
+    'Autonoe': 'Hell',
+    'Enceladus': 'Breathy',
+    'Iapetus': 'Clear',
+    'Umbriel': 'Gelassen',
+    'Algieba': 'Smooth',
+    'Despina': 'Weich',
+    'Erinome': 'Wolkenlos',
+    'Algenib': 'Kiesig',
+    'Rasalgethi': 'Informativ',
+    'Laomedeia': 'Upbeat',
+    'Achernar': 'Weich',
+    'Alnilam': 'Firm',
+    'Schedar': 'Gerade',
+    'Gacrux': 'Nicht jugendfrei',
+    'Pulcherrima': 'Kess',
+    'Achird': 'Freundlich',
+    'Zubenelgenubi': 'Casual',
+    'Vindemiatrix': 'Sanft',
+    'Sadachbia': 'Lively',
+    'Sadaltager': 'Sachkundig',
+    'Sulafat': 'Warm',
+};
+
 export const MAIN_QUESTS_DATA: Quest[] = [
     {
         id: 'mq01',
         title: '[Hauptquest] Erwachen',
-        description: "Mein Gedächtnis ist eine leere Tafel. Das 'System' auf meinem Arm ist mein einziger Anhaltspunkt. Ich muss die Akademie erkunden und Antworten finden. Jemand hier muss wissen, wer ich bin.",
-        objectives: ['Finde jemanden, der dich kennt.'],
+        description: "Mein Gedächtnis ist eine leere Tafel. Das 'System' auf meinem Arm ist mein einziger Anhaltspunkt. Ich muss die Akademie erkunden und Antworten finden. Der erste Schritt sollte mich zum Trainingsgelände führen; vielleicht erkenne ich dort etwas wieder.",
+        objectives: [
+            { text: 'Gehe zum Trainingsgelände.', completed: false, trigger: 'visit:loc_training_grounds' },
+            { text: 'Finde jemanden, der dich kennt.', completed: false }
+        ],
         rewards: { xp: 100, item: 'Basis-Medkit', essence: 10 },
         status: 'active',
         type: 'main',
@@ -30,7 +67,10 @@ export const MAIN_QUESTS_DATA: Quest[] = [
         id: 'mq02',
         title: '[Hauptquest] Die erste Lektion',
         description: "Ein Trainingsplan ist auf meinem Terminal erschienen. Es ist Zeit zu sehen, was diese Akademie von mir erwartet und was ich von mir selbst erwarten kann.",
-        objectives: ['Nimm an der geplanten Trainingseinheit teil.', 'Sprich mit dem Ausbilder.'],
+        objectives: [
+            { text: 'Nimm an der geplanten Trainingseinheit teil.', completed: false, trigger: 'visit:loc_training_grounds' },
+            { text: 'Sprich mit dem Ausbilder.', completed: false }
+        ],
         rewards: { xp: 150, item: 'Trainingswaffe (Wahl)', essence: 20 },
         status: 'active',
         type: 'main',

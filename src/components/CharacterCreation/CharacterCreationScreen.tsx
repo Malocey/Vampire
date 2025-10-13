@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { PlayerData, PlayerStats } from '../../types';
 import { BASE_STATS, ATTRIBUTE_POINTS_POOL, APPEARANCE_OPTIONS, APPEARANCE_LABELS, MAIN_QUESTS_DATA, SKILL_TREE_DATA } from '../../config/gameConfig';
+import { INITIAL_CODEX_DATA } from '../../config/codexData';
+import { INITIAL_MAP_DATA } from '../../config/mapData';
+import { usePlayerStore } from '../../store/usePlayerStore';
 
-interface CharacterCreationScreenProps {
-    onCharacterCreate: (data: PlayerData) => void;
-}
+export const CharacterCreationScreen = () => {
+    const { initializePlayer } = usePlayerStore();
 
-export const CharacterCreationScreen = ({ onCharacterCreate }: CharacterCreationScreenProps) => {
     const [name, setName] = useState('Kaelen');
     const [stats, setStats] = useState<PlayerStats>(BASE_STATS);
     const [points, setPoints] = useState(ATTRIBUTE_POINTS_POOL);
@@ -33,16 +34,24 @@ export const CharacterCreationScreen = ({ onCharacterCreate }: CharacterCreation
             name,
             level: 1,
             stats,
+            currentHealth: 50 + stats.endurance * 10,
             bloodlineLevel: 1,
             bloodlineName: 'Frischling',
             bloodEssence: 100,
-            skillPoints: 2, // Starting skill points
+            skillPoints: 2,
             appearance,
-            quests: [MAIN_QUESTS_DATA[0]],
-            skillTree: JSON.parse(JSON.stringify(SKILL_TREE_DATA)), // Deep copy
+            quests: JSON.parse(JSON.stringify([MAIN_QUESTS_DATA[0]])),
+            skillTree: JSON.parse(JSON.stringify(SKILL_TREE_DATA)),
             inventory: [],
+            codex: JSON.parse(JSON.stringify(INITIAL_CODEX_DATA)),
+            mapData: JSON.parse(JSON.stringify(INITIAL_MAP_DATA)),
+            transcript: [{
+                speaker: 'system',
+                text: 'System initialisiert. Identitätsrekonstruktion abgeschlossen.'
+            }],
+            npcMemories: {},
         };
-        onCharacterCreate(finalPlayerData);
+        initializePlayer(finalPlayerData);
     };
 
     const isFinalizeDisabled = name.trim().length === 0 || points > 0;

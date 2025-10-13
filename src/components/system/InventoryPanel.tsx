@@ -1,11 +1,11 @@
 import React from 'react';
-import { PlayerData } from '../../types';
+import { usePlayerStore } from '../../store/usePlayerStore';
 
-interface InventoryPanelProps {
-    playerData: PlayerData;
-}
+export const InventoryPanel = () => {
+    const { playerData } = usePlayerStore();
+    
+    if (!playerData) return null;
 
-export const InventoryPanel = ({ playerData }: InventoryPanelProps) => {
     const { inventory } = playerData;
 
     if (!inventory || inventory.length === 0) {

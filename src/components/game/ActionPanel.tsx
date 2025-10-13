@@ -1,16 +1,47 @@
 import React from 'react';
+import { CategorizedSuggestion, SuggestionCategory } from '../../types';
 
 interface MicrophoneControlProps {
     isConnected: boolean;
     isListening: boolean;
     isPaused: boolean;
-    suggestions: string[];
+    suggestions: CategorizedSuggestion[];
     startSession: () => void;
     stopSession: () => void;
     togglePause: () => void;
+    selectSuggestion: (text: string) => void;
 }
 
-export const MicrophoneControl = ({ isConnected, isListening, isPaused, suggestions, startSession, stopSession, togglePause }: MicrophoneControlProps) => {
+
+const SuggestionIcon = ({ category }: { category: SuggestionCategory }) => {
+    switch (category) {
+        case 'Untersuchung':
+            return (
+                <svg className="suggestion-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+            );
+        case 'Dialog':
+            return (
+                <svg className="suggestion-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+            );
+        case 'Aktion':
+            return (
+                <svg className="suggestion-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line>
+                </svg>
+            );
+        default:
+            return null;
+    }
+}
+
+
+export const MicrophoneControl = ({ isConnected, isListening, isPaused, suggestions, startSession, stopSession, togglePause, selectSuggestion }: MicrophoneControlProps) => {
 
     const handleMainButtonClick = () => {
         if (isConnected) {
@@ -84,8 +115,15 @@ export const MicrophoneControl = ({ isConnected, isListening, isPaused, suggesti
                         <h4 className="suggestions-title">Was du sagen könntest:</h4>
                         <div className="suggestions-buttons">
                             {suggestions.map((suggestion, index) => (
-                                <button key={index} className="suggestion-btn">
-                                    {suggestion}
+                                <button 
+                                    key={index} 
+                                    className="suggestion-btn" 
+                                    title={suggestion.category}
+                                    onClick={() => selectSuggestion(suggestion.text)}
+                                    disabled={!isListening}
+                                >
+                                    <SuggestionIcon category={suggestion.category} />
+                                    {suggestion.text}
                                 </button>
                             ))}
                         </div>

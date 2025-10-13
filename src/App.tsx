@@ -1,25 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import { GameState, PlayerData } from './types';
+import React, { useEffect } from 'react';
+import { usePlayerStore } from './store/usePlayerStore';
 import { useGeminiLive } from './hooks/useGeminiLive';
-import { saveGame, loadGame, deleteSave } from './utils/saveLoad';
 import { IntroScreen } from './components/intro';
 import { CharacterCreationScreen } from './components/CharacterCreation';
 import { Header } from './components/common';
-import { LogPanel, MicrophoneControl } from './components/game';
+import { LogPanel, MicrophoneControl, GameHUD } from './components/game';
 import { SystemInterface } from './components/system';
 
+const DynamicBackground = () => {
+    const particles = Array.from({ length: 25 });
+
+    return (
+        <div className="particles-container" aria-hidden="true">
+            {particles.map((_, i) => {
+                const size = Math.random() * 2.5 + 1;
+                const style = {
+                    left: `${Math.random() * 100}%`,
+                    width: `${size}px`,
+                    height: `${size}px`,
+                    animationDelay: `${Math.random() * 20}s`,
+                    animationDuration: `${Math.random() * 15 + 10}s`,
+                };
+                return <div key={i} className="particle" style={style}></div>;
+            })}
+        </div>
+    );
+};
+
 const App = () => {
-    const [gameState, setGameState] = useState<GameState>('intro');
-    const [playerData, setPlayerData] = useState<PlayerData | null>(null);
-    const [saveFileExists, setSaveFileExists] = useState(false);
-    const [isQuestLoading, setIsQuestLoading] = useState(false);
-    
+    const { gameState, playerData, checkSaveFile, isQuestLoading, setIsQuestLoading } = usePlayerStore();
+    const [isSystemVisible, setIsSystemVisible] = React.useState(false);
+
     useEffect(() => {
-        const savedData = loadGame();
-        if (savedData) {
-            setSaveFileExists(true);
-        }
-    }, []);
+        checkSaveFile();
+    }, [checkSaveFile]);
 
     const { 
         isConnected, 
@@ -31,72 +45,50 @@ const App = () => {
         startSession, 
         stopSession,
         toggleMute,
-        togglePause
+        togglePause,
+        selectSuggestion
     } = useGeminiLive();
 
     useEffect(() => {
-        // Automatically stop session if player data/game state changes
         return () => {
             if (isConnected) {
                 stopSession();
             }
         };
-    }, [playerData, gameState, isConnected, stopSession]);
-
-    const handleCharacterCreation = (data: PlayerData) => {
-        setPlayerData(data);
-        setGameState('game');
-        saveGame(data); // First save
-        setSaveFileExists(true);
-    };
-    
-    const handleUpdatePlayerData = (data: PlayerData) => {
-        setPlayerData(data);
-        saveGame(data); // Autosave on any update
-    };
-
-    const handleSaveGame = () => {
-        if (playerData) {
-            saveGame(playerData);
-            // Here you could add a toast/notification to confirm the save
-        }
-    };
-
-    const handleLoadGame = () => {
-        const data = loadGame();
-        if (data) {
-            setPlayerData(data);
-            setGameState('game');
-        }
-    };
-
-    const handleNewGame = () => {
-        // Confirmation is handled in the IntroScreen component
-        deleteSave();
-        setSaveFileExists(false);
-        setPlayerData(null); // Clear old data
-        setGameState('creation');
-    };
+    }, [gameState, isConnected, stopSession]);
 
     if (gameState === 'intro') {
-        return <IntroScreen 
-            onFinish={() => setGameState('creation')} 
-            saveFileExists={saveFileExists}
-            onLoadGame={handleLoadGame}
-            onNewGame={handleNewGame}
-        />;
+        return (
+            <>
+                <DynamicBackground />
+                <IntroScreen />
+            </>
+        );
     }
 
     if (gameState === 'creation') {
-        return <CharacterCreationScreen onCharacterCreate={handleCharacterCreation} />;
+        return (
+            <>
+                <DynamicBackground />
+                <CharacterCreationScreen />
+            </>
+        );
     }
 
-    if (playerData) {
+    if (gameState === 'game' && playerData) {
         return (
-            <div className="app-container">
-                <Header isMuted={isMuted} onToggleMute={toggleMute} onSaveGame={handleSaveGame} />
-                <div className="main-content">
-                    <LogPanel transcript={transcript} />
+            <>
+                <DynamicBackground />
+                <div className="app-container">
+                    <Header 
+                        isMuted={isMuted} 
+                        onToggleMute={toggleMute} 
+                        onToggleSystem={() => setIsSystemVisible(!isSystemVisible)}
+                    />
+                    <div className="main-content">
+                        <LogPanel transcript={transcript} />
+                        <GameHUD />
+                    </div>
                     <MicrophoneControl 
                         isConnected={isConnected}
                         isListening={isListening}
@@ -105,19 +97,19 @@ const App = () => {
                         startSession={startSession}
                         stopSession={stopSession}
                         togglePause={togglePause}
+                        selectSuggestion={selectSuggestion}
+                    />
+                    <SystemInterface 
+                        isQuestLoading={isQuestLoading} 
+                        setIsQuestLoading={setIsQuestLoading}
+                        className={isSystemVisible ? 'visible' : ''}
                     />
                 </div>
-                <SystemInterface 
-                    playerData={playerData} 
-                    onUpdatePlayerData={handleUpdatePlayerData} 
-                    isQuestLoading={isQuestLoading} 
-                    setIsQuestLoading={setIsQuestLoading}
-                />
-            </div>
+            </>
         );
     }
 
-    return null; // Should not be reached
+    return null;
 };
 
 export default App;
