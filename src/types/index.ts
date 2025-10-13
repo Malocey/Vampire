@@ -60,7 +60,12 @@ export type PrebuiltVoice =
     | 'Echo' | 'Onyx' | 'Nova' | 'Shimmer' | 'Luna' | 'Comet' | 'Jupiter'
     | 'WaveNet-A' | 'WaveNet-B' | 'WaveNet-C' | 'WaveNet-D' | 'WaveNet-E'
     | 'WaveNet-F' | 'WaveNet-G' | 'WaveNet-H' | 'WaveNet-I' | 'WaveNet-J'
-    | 'Zephyr';
+    | 'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Leda' | 'Orus'
+    | 'Aoede' | 'Callirrhoe' | 'Autonoe' | 'Enceladus' | 'Iapetus'
+    | 'Umbriel' | 'Algieba' | 'Despina' | 'Erinome' | 'Algenib'
+    | 'Rasalgethi' | 'Laomedeia' | 'Achernar' | 'Alnilam' | 'Schedar'
+    | 'Gacrux' | 'Pulcherrima' | 'Achird' | 'Zubenelgenubi'
+    | 'Vindemiatrix' | 'Sadachbia' | 'Sadaltager' | 'Sulafat';
 
 export interface CodexEntry {
     id: string;

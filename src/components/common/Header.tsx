@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import { PlayerData } from '../../types';
 import { ai } from '../../config/api';
+import { exportSaveToFile, importSaveFromFile } from '../../utils/saveLoad';
 
 interface HeaderProps {
     isMuted: boolean;
@@ -15,65 +16,32 @@ export const Header = ({ isMuted, onToggleMute, onToggleSystem }: HeaderProps) =
     const [isTestLoading, setIsTestLoading] = useState(false);
 
     const handleExport = () => {
-        if (!playerData) {
-            alert('Keine Speicherdaten zum Exportieren vorhanden.');
-            return;
-        }
-        try {
-            const dataStr = JSON.stringify(playerData, null, 2);
-            const blob = new Blob([dataStr], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            link.download = `crimson-academy-save-${timestamp}.json`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error('Fehler beim Exportieren des Spielstands:', error);
-            alert('Fehler beim Exportieren des Spielstands.');
-        }
+        exportSaveToFile();
     };
 
     const handleImportClick = () => {
         fileInputRef.current?.click();
     };
 
-    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const text = e.target?.result;
-                if (typeof text !== 'string') {
-                    throw new Error('Datei konnte nicht als Text gelesen werden.');
-                }
-                const importedData = JSON.parse(text) as PlayerData;
-
-                // Simple validation to ensure it's a valid save file
-                if (importedData && importedData.name && importedData.stats && importedData.quests) {
-                    if (window.confirm('Möchten Sie den aktuellen Spielstand wirklich mit den Daten aus der Datei überschreiben?')) {
-                        setPlayerData(importedData);
-                        alert('Spielstand erfolgreich importiert!');
-                    }
-                } else {
-                    throw new Error('Die Datei scheint kein gültiger Spielstand zu sein.');
-                }
-            } catch (error) {
-                console.error('Fehler beim Importieren des Spielstands:', error);
-                alert(`Fehler beim Importieren: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`);
-            } finally {
-                // Reset file input to allow importing the same file again
-                if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                }
+        try {
+            const importedData = await importSaveFromFile(file);
+            if (window.confirm('Möchten Sie den aktuellen Spielstand wirklich mit den Daten aus der Datei überschreiben?')) {
+                setPlayerData(importedData);
+                saveGame(importedData);
+                alert('Spielstand erfolgreich importiert!');
             }
-        };
-        reader.readAsText(file);
+        } catch (error) {
+            console.error('Fehler beim Importieren des Spielstands:', error);
+            alert(`Fehler beim Importieren: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`);
+        } finally {
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }
     };
 
     const handleTestConversation = async () => {

@@ -162,11 +162,27 @@ body {
 
 .main-content {
     flex-grow: 1;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
     gap: 15px;
     overflow: hidden;
     padding: 0 20px 15px 20px;
+}
+
+.game-view {
+    grid-column: 1 / 2;
+    grid-row: 1 / 2;
+}
+
+.chronicle-panel {
+    grid-column: 2 / 3;
+    grid-row: 1 / 2;
+}
+
+.game-hud-container {
+    grid-column: 1 / 3;
+    grid-row: 2 / 3;
 }
 
 /* --- Header --- */
@@ -502,6 +518,108 @@ header {
 }
 .suggestion-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
+.keyword-highlight {
+    color: var(--accent-red);
+    text-shadow: 0 0 5px var(--accent-glow);
+}
+
+.text-input-container {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    max-width: 600px;
+    margin-top: 1rem;
+}
+
+.text-input-container input {
+    flex-grow: 1;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border-color);
+    background-color: var(--primary-bg);
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.text-input-container button {
+    padding: 10px 20px;
+    border-radius: 5px;
+    border: 1px solid var(--color-connected);
+    background-color: var(--color-connected);
+    color: var(--primary-bg);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.text-input-container button:hover {
+    background-color: transparent;
+    color: var(--color-connected);
+}
+
+/* Chronicle Panel */
+.chronicle-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding: 15px;
+    background-color: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+    border-radius: 8px;
+}
+
+.chronicle-panel h3 {
+    color: var(--accent-red);
+    font-family: var(--font-title);
+    font-size: 1.4rem;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+    letter-spacing: 1px;
+}
+
+.story-content {
+    flex-grow: 1;
+    overflow-y: auto;
+    max-height: 300px;
+}
+
+.story-content p {
+    line-height: 1.7;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+}
+
+.chronicle-panel button {
+    padding: 12px 30px;
+    font-family: var(--font-title);
+    font-size: 1.3rem;
+    color: var(--text-primary);
+    border: 2px solid var(--color-connected);
+    background-color: rgba(0,0,0,0.3);
+    cursor: pointer;
+    transition: all var(--transition-speed) ease;
+    border-radius: 50px;
+    justify-content: center;
+    letter-spacing: 1px;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+
+.chronicle-panel button:hover:not(:disabled) {
+    background-color: var(--color-connected);
+    color: var(--primary-bg);
+    box-shadow: 0 0 15px var(--color-connected);
+}
+
+.chronicle-panel button:disabled {
+    border-color: var(--text-secondary);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+    background-color: rgba(0,0,0,0.1);
+}
+
 /* System Interface */
 .system-interface {
     height: 45%;
@@ -685,8 +803,21 @@ header {
 
 @media (max-width: 768px) {
     body { font-size: 14px; }
-    .main-content { padding: 0 10px 10px; }
-    .game-hud-container { margin: 0 10px; }
+    .main-content {
+        padding: 0 10px 10px;
+        display: grid;
+        grid-template-rows: 1fr auto auto;
+    }
+    .game-view {
+        grid-row: 1;
+    }
+    .chronicle-panel {
+        grid-row: 2;
+        max-height: 200px;
+    }
+    .game-hud-container {
+        grid-row: 3;
+    }
     .system-interface {
         position: fixed; bottom: 0; left: 0; width: 100%; height: 60%;
         margin: 0; border-radius: 12px 12px 0 0; z-index: 100;
@@ -698,6 +829,32 @@ header {
     .character-panel, .creation-layout { grid-template-columns: 1fr; }
     .quests-panel { flex-direction: column; }
     .quest-sidebar { width: 100%; }
+    .action-panel {
+        bottom: 1rem;
+        width: 95%;
+    }
+    .suggestions-container {
+        flex-wrap: wrap;
+        margin-bottom: 0.5rem;
+    }
+    .suggestion-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+    }
+    .bottom-bar {
+        padding: 0.25rem;
+    }
+    .mic-btn {
+        width: 50px;
+        height: 50px;
+    }
+    .mic-icon {
+        width: 22px;
+        height: 22px;
+    }
+    .status-indicator {
+        padding-left: 1rem;
+    }
 }
 
 /* Dynamic Background - Unchanged */

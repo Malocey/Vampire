@@ -67,7 +67,7 @@ function usePrevious<T>(value: T): T | undefined {
   return ref.current;
 }
 
-export const getVoiceForText = (text: string): PrebuiltVoice => {
+const getVoiceForText = (text: string): PrebuiltVoice => {
     const textLower = text.toLowerCase();
 
     // 1. Check for emotional cues in parentheses, e.g., (Screaming)
@@ -95,7 +95,6 @@ export const getVoiceForText = (text: string): PrebuiltVoice => {
 
 export const useGeminiLive = () => {
     const { playerData, setPlayerData, updateTranscript } = usePlayerStore();
-    const { setModuleStatus } = useApiStatusStore();
     const transcript = playerData?.transcript || [];
     
     const [isConnected, setIsConnected] = useState(false);
@@ -430,6 +429,10 @@ export const useGeminiLive = () => {
         isPausedRef.current = false;
         updateTranscript(prev => [...prev, { speaker: 'system', text: 'Stelle Verbindung her...'}]);
 
+        if (window.location.protocol !== 'https:') {
+            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Mikrofonzugriff nur über HTTPS möglich.'}]);
+            return;
+        }
         try {
             streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
         } catch (error) {
@@ -495,6 +498,13 @@ export const useGeminiLive = () => {
                     scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
                 },
                 onmessage: async (message: LiveServerMessage) => {
+                    const hasModelOutput = message.serverContent?.outputTranscription || message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+
+                    if (hasModelOutput && isListeningRef.current) {
+                        setIsListening(false);
+                        isListeningRef.current = false;
+                        setSuggestions([]);
+                    }
                     if (message.serverContent?.inputTranscription) {
                         const textChunk = message.serverContent.inputTranscription.text;
                         updateTranscript(prev => {
@@ -588,7 +598,7 @@ export const useGeminiLive = () => {
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: { voiceName: NARRATOR_VOICE } },
+                    voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
                 },
                 inputAudioTranscription: {},
                 outputAudioTranscription: {},

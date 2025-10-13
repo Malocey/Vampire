@@ -6,6 +6,7 @@ import { CharacterCreationScreen } from './components/CharacterCreation';
 import { Header } from './components/common';
 import { LogPanel, MicrophoneControl, GameHUD } from './components/game';
 import { SystemInterface } from './components/system';
+import { useStoryGenerator } from './hooks/useStoryGenerator';
 
 const DynamicBackground = () => {
     const particles = Array.from({ length: 25 });
@@ -30,6 +31,7 @@ const DynamicBackground = () => {
 const App = () => {
     const { gameState, playerData, checkSaveFile, isQuestLoading, setIsQuestLoading } = usePlayerStore();
     const [isSystemVisible, setIsSystemVisible] = React.useState(false);
+    const { isGenerating, story, canContinue, generateStory } = useStoryGenerator();
 
     useEffect(() => {
         checkSaveFile();
@@ -86,7 +88,7 @@ const App = () => {
                         onToggleSystem={() => setIsSystemVisible(!isSystemVisible)}
                     />
                     <div className="main-content">
-                        <LogPanel transcript={transcript} />
+                        <LogPanel transcript={transcript} story={story} isGeneratingStory={isGenerating} canContinueStory={canContinue} generateStory={generateStory} />
                         <GameHUD />
                     </div>
                     <MicrophoneControl 
