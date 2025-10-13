@@ -6,9 +6,12 @@ import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, Cod
 import { usePlayerStore } from '../store/usePlayerStore';
 import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
 import { useApiStatusStore } from '../store/useApiStatusStore';
+import { Howl } from 'howler';
 import { isQuotaError } from '../utils/errorUtils';
 import { INITIAL_MAP_DATA } from '../config/mapData';
 import { parseSpeechCommands } from '../utils/speechParser';
+import { SFX_CONFIG, MUSIC_CONFIG } from '../config/soundConfig';
+import { getCachedAudio, cacheAudio } from '../utils/audioCache';
 
 function encode(bytes: Uint8Array) {
   let binary = '';
@@ -541,12 +544,38 @@ export const useGeminiLive = () => {
                             const session = await sessionPromiseRef.current;
 
                             for (const job of speechJobs) {
-                                session?.sendRealtimeInput({
-                                    text: job.text,
-                                    speechConfig: {
-                                        voiceConfig: { prebuiltVoiceConfig: job.voiceProfile },
-                                    },
-                                });
+                                if (job.type === 'speech') {
+                                    session?.sendRealtimeInput({
+                                        text: job.text,
+                                        speechConfig: {
+                                            voiceConfig: { prebuiltVoiceConfig: job.voiceProfile },
+                                        },
+                                    });
+                                } else if (job.type === 'sfx') {
+                                    const cachedAudio = await getCachedAudio(SFX_CONFIG[job.effect]);
+                                    if (cachedAudio) {
+                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)] });
+                                        sound.play();
+                                    } else {
+                                        const sound = new Howl({ src: [SFX_CONFIG[job.effect]] });
+                                        sound.play();
+                                        const response = await fetch(SFX_CONFIG[job.effect]);
+                                        const blob = await response.blob();
+                                        await cacheAudio(SFX_CONFIG[job.effect], blob);
+                                    }
+                                } else if (job.type === 'music') {
+                                    const cachedAudio = await getCachedAudio(MUSIC_CONFIG[job.track]);
+                                    if (cachedAudio) {
+                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)], loop: true });
+                                        sound.play();
+                                    } else {
+                                        const sound = new Howl({ src: [MUSIC_CONFIG[job.track]], loop: true });
+                                        sound.play();
+                                        const response = await fetch(MUSIC_CONFIG[job.track]);
+                                        const blob = await response.blob();
+                                        await cacheAudio(MUSIC_CONFIG[job.track], blob);
+                                    }
+                                }
                             }
 
                             processModelResponse(lastModelResponse);

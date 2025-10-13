@@ -1,10 +1,10 @@
 import { VoiceProfile } from '../types';
 import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
 
-export interface SpeechJob {
-    text: string;
-    voiceProfile: VoiceProfile;
-}
+export type SpeechJob =
+    | { type: 'speech'; text: string; voiceProfile: VoiceProfile }
+    | { type: 'sfx'; effect: string }
+    | { type: 'music'; track: string };
 
 export const parseSpeechCommands = (text: string): SpeechJob[] => {
     const jobs: SpeechJob[] = [];
@@ -14,6 +14,20 @@ export const parseSpeechCommands = (text: string): SpeechJob[] => {
     while ((match = regex.exec(text)) !== null) {
         const command = match[1].trim();
         const dialogue = match[2].trim();
+
+        if (command.startsWith('sound effect:')) {
+            const effect = command.replace('sound effect:', '').trim();
+            jobs.push({ type: 'sfx', effect });
+            if (dialogue) jobs.push({ type: 'speech', text: dialogue, voiceProfile: NARRATOR_VOICE });
+            continue;
+        }
+
+        if (command.startsWith('music:')) {
+            const track = command.replace('music:', '').trim();
+            jobs.push({ type: 'music', track });
+            if (dialogue) jobs.push({ type: 'speech', text: dialogue, voiceProfile: NARRATOR_VOICE });
+            continue;
+        }
 
         const [speaker, ...emotionParts] = command.split(' stimme ');
         const emotion = emotionParts.join(' ').trim();
@@ -28,11 +42,11 @@ export const parseSpeechCommands = (text: string): SpeechJob[] => {
             voiceProfile = { ...voiceProfile, ...EMOTIONAL_VOICES[emotion] };
         }
 
-        jobs.push({ text: dialogue, voiceProfile });
+        jobs.push({ type: 'speech', text: dialogue, voiceProfile });
     }
 
     if (jobs.length === 0 && text.trim()) {
-        jobs.push({ text, voiceProfile: NARRATOR_VOICE });
+        jobs.push({ type: 'speech', text, voiceProfile: NARRATOR_VOICE });
     }
 
     return jobs;
