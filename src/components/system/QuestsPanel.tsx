@@ -45,11 +45,9 @@ export const QuestsPanel = ({ onGenerateQuest, isLoading }: QuestsPanelProps) =>
     const renderMissionBoard = () => (
         <div className="mission-board-view">
             <h3>Missionstafel</h3>
-            <p>Das System kann wiederholbare Nebenmissionen zur Ressourcengewinnung generieren. Wähle eine Kategorie.</p>
+            <p>Das System kann wiederholbare Nebenmissionen zur Ressourcengewinnung generieren.</p>
             <div className="mission-buttons">
-                <button onClick={() => onGenerateQuest('Gathering')} disabled={isLoading}>{isLoading ? 'Generiere...' : 'Sammelmission'}</button>
-                <button onClick={() => onGenerateQuest('Elimination')} disabled={isLoading}>{isLoading ? 'Generiere...' : 'Eliminierungsmission'}</button>
-                <button onClick={() => onGenerateQuest('Investigation')} disabled={isLoading}>{isLoading ? 'Generiere...' : 'Untersuchungsmission'}</button>
+                <button onClick={() => onGenerateQuest()} disabled={isLoading}>{isLoading ? 'Generiere...' : 'Neue Quest generieren'}</button>
             </div>
         </div>
     );

@@ -42,18 +42,6 @@ const SuggestionIcon = ({ category }: { category: SuggestionCategory }) => {
 
 
 export const MicrophoneControl = ({ isConnected, isListening, isPaused, suggestions, startSession, stopSession, togglePause, selectSuggestion }: MicrophoneControlProps) => {
-    const [textInput, setTextInput] = React.useState('');
-
-    const handleTextInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        setTextInput(event.target.value);
-    };
-
-    const handleSendClick = () => {
-        if (textInput.trim() !== '') {
-            selectSuggestion(textInput.trim());
-            setTextInput('');
-        }
-    };
 
     const handleMainButtonClick = () => {
         if (isConnected) {
@@ -159,15 +147,6 @@ export const MicrophoneControl = ({ isConnected, isListening, isPaused, suggesti
                 <p className="connection-status">
                     Status: {getStatusContent()}
                 </p>
-                <div className="text-input-container">
-                    <input
-                        type="text"
-                        value={textInput}
-                        onChange={handleTextInputChange}
-                        placeholder="Text eingeben..."
-                    />
-                    <button onClick={handleSendClick}>Senden</button>
-                </div>
             </div>
         </div>
     );
