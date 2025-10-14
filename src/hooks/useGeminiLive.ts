@@ -22,6 +22,35 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
 function createBlob(data: ArrayBuffer): Blob {
     const int16 = new Int16Array(data);
     return {
@@ -55,7 +84,8 @@ export const useGeminiLive = () => {
 
     const sessionPromiseRef = useRef<ReturnType<typeof ai.live.connect> | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
+    const inputAudioContextRef = useRef<AudioContext | null>(null);
+    const outputAudioContextRef = useRef<AudioContext | null>(null);
     const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
@@ -63,6 +93,9 @@ export const useGeminiLive = () => {
     const isPausedRef = useRef(false);
     useEffect(() => { isPausedRef.current = isPaused }, [isPaused]);
     
+    const nextStartTimeRef = useRef(0);
+    const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+
     const cleanup = useCallback(() => {
         if (audioWorkletNodeRef.current) {
             audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: false });
@@ -73,13 +106,21 @@ export const useGeminiLive = () => {
             mediaStreamSourceRef.current.disconnect();
             mediaStreamSourceRef.current = null;
         }
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-            audioContextRef.current.close();
+        if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+            inputAudioContextRef.current.close();
+        }
+        if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+             outputAudioContextRef.current.close();
         }
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
             streamRef.current = null;
         }
+        for (const source of audioSourcesRef.current.values()) {
+            source.stop();
+        }
+        audioSourcesRef.current.clear();
+        nextStartTimeRef.current = 0;
         setIsConnected(false);
         setIsListening(false);
         setIsPaused(false);
@@ -372,7 +413,8 @@ export const useGeminiLive = () => {
             return;
         }
         
-        audioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
+        inputAudioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
+        outputAudioContextRef.current = new window.AudioContext({ sampleRate: 24000 });
 
         const fullTranscript = initialPlayerData.transcript.map(t => `${t.speaker}: ${t.text}`).join('\n');
         let dynamicSystemInstruction = `${SYSTEM_INSTRUCTION}\n\n**Bisheriger Gesprächsverlauf:**\n${fullTranscript}`;
@@ -403,19 +445,19 @@ export const useGeminiLive = () => {
             model: 'gemini-2.5-flash-native-audio-preview-09-2025',
             callbacks: {
                 onopen: () => {
-                    updateTranscript(prev => [...prev.filter(e => e.text !== 'Stelle Verbindung her...'), { speaker: 'system', text: 'Verbindung hergestellt. Du kannst jetzt sprechen.' }]);
+                    updateTranscript(prev => [...prev.filter(e => e.text !== 'Stelle Verbindung her...'), { speaker: 'system', text: 'Verbindung hergestellt. Du kannst jetzt sprechen.'}]);
                     setIsConnected(true);
                     setIsListening(true);
                     isListeningRef.current = true;
 
-                    if (!streamRef.current || !audioContextRef.current) return;
+                    if (!streamRef.current || !inputAudioContextRef.current) return;
 
                     const setupAudio = async () => {
                         try {
-                            if (!audioContextRef.current) return;
-                            await audioContextRef.current.audioWorklet.addModule('audio-processor.js');
-                            mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(streamRef.current!);
-                            audioWorkletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+                            if (!inputAudioContextRef.current) return;
+                            await inputAudioContextRef.current.audioWorklet.addModule('audio-processor.js');
+                            mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(streamRef.current!);
+                            audioWorkletNodeRef.current = new AudioWorkletNode(inputAudioContextRef.current, 'audio-processor');
 
                             audioWorkletNodeRef.current.port.onmessage = (event) => {
                                 if (event.data.type === 'audioData' && isListeningRef.current) {
@@ -430,7 +472,7 @@ export const useGeminiLive = () => {
 
                             audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: true });
                             mediaStreamSourceRef.current.connect(audioWorkletNodeRef.current);
-                            audioWorkletNodeRef.current.connect(audioContextRef.current.destination);
+                            audioWorkletNodeRef.current.connect(inputAudioContextRef.current.destination);
                         } catch (e) {
                             console.error('Error loading audio worklet module:', e);
                             updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Audiomodul konnte nicht geladen werden.' }]);
@@ -441,14 +483,13 @@ export const useGeminiLive = () => {
                     setupAudio();
                 },
                 onmessage: async (message: LiveServerMessage) => {
-                    if (message.serverContent?.inputTranscription || message.serverContent?.outputTranscription) {
-                        if (isListeningRef.current) {
-                            setIsListening(false);
-                            isListeningRef.current = false;
-                            setSuggestions([]);
-                        }
-                    }
+                    const hasModelOutput = message.serverContent?.outputTranscription || message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
 
+                    if (hasModelOutput && isListeningRef.current) {
+                        setIsListening(false);
+                        isListeningRef.current = false;
+                        setSuggestions([]);
+                    }
                     if (message.serverContent?.inputTranscription) {
                         const textChunk = message.serverContent.inputTranscription.text;
                         updateTranscript(prev => {
@@ -535,6 +576,25 @@ export const useGeminiLive = () => {
                             isListeningRef.current = true;
                         }
                     }
+
+                    const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+                    if (audioData && outputAudioContextRef.current && !isMuted) {
+                        const outputCtx = outputAudioContextRef.current;
+                        const audioBuffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
+                        const source = outputCtx.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(outputCtx.destination);
+
+                        const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
+                        source.start(startTime);
+
+                        nextStartTimeRef.current = startTime + audioBuffer.duration;
+                        audioSourcesRef.current.add(source);
+
+                        source.addEventListener('ended', () => {
+                            audioSourcesRef.current.delete(source);
+                        });
+                    }
                 },
                 onerror: (e: ErrorEvent) => {
                     console.error("WebSocket Error:", e);
@@ -547,7 +607,7 @@ export const useGeminiLive = () => {
                 },
             },
             config: {
-                responseModalities: [Modality.AUDIO, Modality.TEXT],
+                responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: { prebuiltVoiceConfig: NARRATOR_VOICE },
                 },
@@ -556,7 +616,19 @@ export const useGeminiLive = () => {
                 systemInstruction: dynamicSystemInstruction,
             },
         });
-    }, [stopSession, cleanup, processModelResponse, updateTranscript, updateNpcMemory, setModuleStatus]);
+    }, [stopSession, isMuted, cleanup, processModelResponse, updateTranscript, updateNpcMemory, setModuleStatus]);
+
+    const toggleMute = useCallback(() => {
+        const newMutedState = !isMuted;
+        setIsMuted(newMutedState);
+        if (newMutedState) {
+            for (const source of audioSourcesRef.current.values()) {
+                source.stop();
+            }
+            audioSourcesRef.current.clear();
+            nextStartTimeRef.current = 0;
+        }
+    }, [isMuted]);
     
     useEffect(() => {
         return () => {
@@ -566,5 +638,5 @@ export const useGeminiLive = () => {
         };
     }, [isConnected, stopSession]);
 
-    return { isConnected, isMuted, isListening, isPaused, transcript, suggestions, startSession, stopSession, togglePause, selectSuggestion, setIsMuted };
+    return { isConnected, isMuted, isListening, isPaused, transcript, suggestions, startSession, stopSession, toggleMute, togglePause, selectSuggestion };
 };

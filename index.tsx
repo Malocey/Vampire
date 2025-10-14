@@ -4,14 +4,10 @@ import App from './src/App';
 
 const container = document.getElementById('root');
 if (container) {
-    try {
-        const root = createRoot(container);
-        root.render(
-            <React.StrictMode>
-                <App />
-            </React.StrictMode>
-        );
-    } catch (error) {
-        console.error("Error rendering React app:", error);
-    }
+    const root = createRoot(container);
+    root.render(
+        <React.StrictMode>
+            <App />
+        </React.StrictMode>
+    );
 }
