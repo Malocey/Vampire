@@ -57,10 +57,25 @@ export interface InventoryItem {
 }
 
 export type PrebuiltVoice =
+    | 'Zephyr' | 'Puck' | 'Charon'
+    | 'Kore' | 'Fenrir' | 'Leda'
+    | 'Orus' | 'Aoede' | 'Callirrhoe'
+    | 'Autonoe' | 'Enceladus' | 'Iapetus'
+    | 'Umbriel' | 'Algieba' | 'Despina'
+    | 'Erinome' | 'Algenib' | 'Rasalgethi'
+    | 'Laomedeia' | 'Achernar' | 'Alnilam'
+    | 'Schedar' | 'Gacrux' | 'Pulcherrima'
+    | 'Achird' | 'Zubenelgenubi' | 'Vindemiatrix'
+    | 'Sadachbia' | 'Sadaltager' | 'Sulafat'
     | 'Echo' | 'Onyx' | 'Nova' | 'Shimmer' | 'Luna' | 'Comet' | 'Jupiter'
     | 'WaveNet-A' | 'WaveNet-B' | 'WaveNet-C' | 'WaveNet-D' | 'WaveNet-E'
-    | 'WaveNet-F' | 'WaveNet-G' | 'WaveNet-H' | 'WaveNet-I' | 'WaveNet-J'
-    | 'Zephyr';
+    | 'WaveNet-F' | 'WaveNet-G' | 'WaveNet-H' | 'WaveNet-I' | 'WaveNet-J';
+
+export interface VoiceProfile {
+    voiceName: PrebuiltVoice;
+    seed: number;
+    temperature: number;
+}
 
 export interface CodexEntry {
     id: string;
@@ -69,7 +84,7 @@ export interface CodexEntry {
     content: string;
     keywords: string[];
     unlocked: boolean;
-    voice?: PrebuiltVoice;
+    voice?: VoiceProfile;
 }
 
 export interface MapLocation {

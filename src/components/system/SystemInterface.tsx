@@ -29,7 +29,7 @@ export const SystemInterface = ({ isQuestLoading, setIsQuestLoading, className }
     
     const handleGenerateQuest = async (questType: string) => {
         if (!playerData) return;
-        
+
         setIsQuestLoading(true);
 
         const context = {
@@ -153,7 +153,7 @@ export const SystemInterface = ({ isQuestLoading, setIsQuestLoading, className }
                     }
                 });
             }
-            
+
             if (generatedData.newMapLocations && generatedData.newMapLocations.length > 0) {
                  generatedData.newMapLocations.forEach((loc: MapLocation) => {
                     if (!newPlayerData.mapData.some((m: MapLocation) => m.id === loc.id)) {
@@ -161,7 +161,7 @@ export const SystemInterface = ({ isQuestLoading, setIsQuestLoading, className }
                     }
                 });
             }
-            
+
             setPlayerData(newPlayerData);
 
         } catch (error) {
