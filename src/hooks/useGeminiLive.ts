@@ -2,12 +2,16 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob, Type } from '@google/genai';
 import { ai, SYSTEM_INSTRUCTION } from '../config/api';
 import { VOICE_CHARACTERISTICS } from '../config/gameConfig';
-import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, CodexEntry, PrebuiltVoice, API_MODULES } from '../types';
+import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, CodexEntry, PrebuiltVoice, API_MODULES, VoiceProfile } from '../types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
 import { useApiStatusStore } from '../store/useApiStatusStore';
 import { isQuotaError } from '../utils/errorUtils';
 import { INITIAL_MAP_DATA } from '../config/mapData';
+import { parseSpeechCommands } from '../utils/speechParser';
+import { Howl } from 'howler';
+import { SFX_CONFIG, MUSIC_CONFIG } from '../config/soundConfig';
+import { getCachedAudio, cacheAudio } from '../utils/audioCache';
 
 function encode(bytes: Uint8Array) {
   let binary = '';
@@ -47,12 +51,8 @@ async function decodeAudioData(
   return buffer;
 }
 
-function createBlob(data: Float32Array): Blob {
-    const l = data.length;
-    const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) {
-        int16[i] = data[i] * 32768;
-    }
+function createBlob(data: ArrayBuffer): Blob {
+    const int16 = new Int16Array(data);
     return {
         data: encode(new Uint8Array(int16.buffer)),
         mimeType: 'audio/pcm;rate=16000',
@@ -66,32 +66,6 @@ function usePrevious<T>(value: T): T | undefined {
   });
   return ref.current;
 }
-
-export const getVoiceForText = (text: string): PrebuiltVoice => {
-    const textLower = text.toLowerCase();
-
-    // 1. Check for emotional cues in parentheses, e.g., (Screaming)
-    const emotionalMatch = text.match(/\((.*?)\)/);
-    if (emotionalMatch) {
-        const emotion = emotionalMatch[1];
-        const key = emotion.charAt(0).toUpperCase() + emotion.slice(1).toLowerCase();
-        if (key in EMOTIONAL_VOICES) {
-            return EMOTIONAL_VOICES[key];
-        }
-    }
-
-    // 2. Check for character names in quotes or at the start of a line
-    for (const character in CHARACTER_VOICES) {
-        const regex = new RegExp(`^"${character}":|${character}:`, 'i');
-        if (regex.test(text)) {
-            return CHARACTER_VOICES[character];
-        }
-    }
-
-    // 3. Default to narrator voice
-    return NARRATOR_VOICE;
-};
-
 
 export const useGeminiLive = () => {
     const { playerData, setPlayerData, updateTranscript } = usePlayerStore();
@@ -112,7 +86,7 @@ export const useGeminiLive = () => {
     const streamRef = useRef<MediaStream | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+    const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
     const isListeningRef = useRef(false);
@@ -123,9 +97,10 @@ export const useGeminiLive = () => {
     const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
     const cleanup = useCallback(() => {
-        if (scriptProcessorRef.current) {
-            scriptProcessorRef.current.disconnect();
-            scriptProcessorRef.current = null;
+        if (audioWorkletNodeRef.current) {
+            audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: false });
+            audioWorkletNodeRef.current.disconnect();
+            audioWorkletNodeRef.current = null;
         }
         if (mediaStreamSourceRef.current) {
             mediaStreamSourceRef.current.disconnect();
@@ -441,15 +416,16 @@ export const useGeminiLive = () => {
         inputAudioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
         outputAudioContextRef.current = new window.AudioContext({ sampleRate: 24000 });
 
-        let dynamicSystemInstruction = SYSTEM_INSTRUCTION;
+        const fullTranscript = initialPlayerData.transcript.map(t => `${t.speaker}: ${t.text}`).join('\n');
+        let dynamicSystemInstruction = `${SYSTEM_INSTRUCTION}\n\n**Bisheriger Gesprächsverlauf:**\n${fullTranscript}`;
         
         const npcCodex = initialPlayerData.codex.filter(c => c.category === 'Personen' && c.voice);
         if (npcCodex.length > 0) {
             let voiceProfiles = '\n\n-- Spezifische NPC-Stimmprofile --\n';
             npcCodex.forEach(npc => {
-                 if (npc.voice && VOICE_CHARACTERISTICS[npc.voice]) {
-                    const characteristic = VOICE_CHARACTERISTICS[npc.voice];
-                    voiceProfiles += `- **${npc.title} (Stimme '${npc.voice}'):** Nutze eine Stimme, die '${characteristic}' ist. Deine Darstellung muss den Charakterdetails entsprechen: "${npc.content}"\n`;
+                 if (npc.voice && VOICE_CHARACTERISTICS[npc.voice.voiceName]) {
+                    const characteristic = VOICE_CHARACTERISTICS[npc.voice.voiceName];
+                    voiceProfiles += `- **${npc.title} (Stimme '${npc.voice.voiceName}'):** Nutze eine Stimme, die '${characteristic}' ist. Deine Darstellung muss den Charakterdetails entsprechen: "${npc.content}"\n`;
                  }
             });
             dynamicSystemInstruction += voiceProfiles;
@@ -473,28 +449,47 @@ export const useGeminiLive = () => {
                     setIsConnected(true);
                     setIsListening(true);
                     isListeningRef.current = true;
-                    
-                    if (!streamRef.current || !inputAudioContextRef.current) return;
-                    
-                    mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(streamRef.current);
-                    scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
-                    
-                    scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                        if (!isListeningRef.current) return;
 
-                        const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-                        const pcmBlob = createBlob(inputData);
-                        if (sessionPromiseRef.current) {
-                            sessionPromiseRef.current.then((session) => {
-                                session.sendRealtimeInput({ media: pcmBlob });
-                            });
+                    if (!streamRef.current || !inputAudioContextRef.current) return;
+
+                    const setupAudio = async () => {
+                        try {
+                            if (!inputAudioContextRef.current) return;
+                            await inputAudioContextRef.current.audioWorklet.addModule('audio-processor.js');
+                            mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(streamRef.current!);
+                            audioWorkletNodeRef.current = new AudioWorkletNode(inputAudioContextRef.current, 'audio-processor');
+
+                            audioWorkletNodeRef.current.port.onmessage = (event) => {
+                                if (event.data.type === 'audioData' && isListeningRef.current) {
+                                    const pcmBlob = createBlob(event.data.data);
+                                    if (sessionPromiseRef.current) {
+                                        sessionPromiseRef.current.then((session) => {
+                                            session.sendRealtimeInput({ media: pcmBlob });
+                                        });
+                                    }
+                                }
+                            };
+
+                            audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: true });
+                            mediaStreamSourceRef.current.connect(audioWorkletNodeRef.current);
+                            audioWorkletNodeRef.current.connect(inputAudioContextRef.current.destination);
+                        } catch (e) {
+                            console.error('Error loading audio worklet module:', e);
+                            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Audiomodul konnte nicht geladen werden.' }]);
+                            stopSession();
                         }
                     };
-                    
-                    mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                    scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
+
+                    setupAudio();
                 },
                 onmessage: async (message: LiveServerMessage) => {
+                    const hasModelOutput = message.serverContent?.outputTranscription || message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+
+                    if (hasModelOutput && isListeningRef.current) {
+                        setIsListening(false);
+                        isListeningRef.current = false;
+                        setSuggestions([]);
+                    }
                     if (message.serverContent?.inputTranscription) {
                         const textChunk = message.serverContent.inputTranscription.text;
                         updateTranscript(prev => {
@@ -526,16 +521,42 @@ export const useGeminiLive = () => {
                         const lastModelResponse = currentTranscript.find(e => e.speaker === 'model')?.text;
 
                         if (lastModelResponse && currentPlayerData) {
-                            const voice = getVoiceForText(lastModelResponse);
+                            const speechJobs = parseSpeechCommands(lastModelResponse);
+                            const session = await sessionPromiseRef.current;
 
-                            if (voice !== NARRATOR_VOICE) {
-                                const session = await sessionPromiseRef.current;
-                                session?.sendRealtimeInput({
-                                    text: lastModelResponse,
-                                    speechConfig: {
-                                        voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
-                                    },
-                                });
+                            for (const job of speechJobs) {
+                                if (job.type === 'speech') {
+                                    session?.sendRealtimeInput({
+                                        text: job.text,
+                                        speechConfig: {
+                                            voiceConfig: { prebuiltVoiceConfig: job.voiceProfile },
+                                        },
+                                    });
+                                } else if (job.type === 'sfx') {
+                                    const cachedAudio = await getCachedAudio(SFX_CONFIG[job.effect]);
+                                    if (cachedAudio) {
+                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)] });
+                                        sound.play();
+                                    } else {
+                                        const sound = new Howl({ src: [SFX_CONFIG[job.effect]] });
+                                        sound.play();
+                                        const response = await fetch(SFX_CONFIG[job.effect]);
+                                        const blob = await response.blob();
+                                        await cacheAudio(SFX_CONFIG[job.effect], blob);
+                                    }
+                                } else if (job.type === 'music') {
+                                    const cachedAudio = await getCachedAudio(MUSIC_CONFIG[job.track]);
+                                    if (cachedAudio) {
+                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)], loop: true });
+                                        sound.play();
+                                    } else {
+                                        const sound = new Howl({ src: [MUSIC_CONFIG[job.track]], loop: true });
+                                        sound.play();
+                                        const response = await fetch(MUSIC_CONFIG[job.track]);
+                                        const blob = await response.blob();
+                                        await cacheAudio(MUSIC_CONFIG[job.track], blob);
+                                    }
+                                }
                             }
 
                             processModelResponse(lastModelResponse);
@@ -563,7 +584,7 @@ export const useGeminiLive = () => {
                         const source = outputCtx.createBufferSource();
                         source.buffer = audioBuffer;
                         source.connect(outputCtx.destination);
-                        
+
                         const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
                         source.start(startTime);
 
@@ -588,7 +609,7 @@ export const useGeminiLive = () => {
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: { voiceName: NARRATOR_VOICE } },
+                    voiceConfig: { prebuiltVoiceConfig: NARRATOR_VOICE },
                 },
                 inputAudioTranscription: {},
                 outputAudioTranscription: {},

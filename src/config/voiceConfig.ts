@@ -1,28 +1,25 @@
-import { PrebuiltVoice } from '../types';
+import { VoiceProfile } from '../types';
 
-export const NARRATOR_VOICE: PrebuiltVoice = 'Zephyr';
-
-export const CHARACTER_VOICES: Record<string, PrebuiltVoice> = {
-    'Amalia': 'Luna',
-    'Corvus': 'Onyx',
-    'Seraphina': 'Nova',
-    'Lysander': 'Echo',
-    'Lilith': 'Comet',
-    'Kaelen': 'Jupiter',
-    'Welt': 'Zephyr',
+export const NARRATOR_VOICE: VoiceProfile = {
+    voiceName: 'Zephyr',
+    seed: 1234,
+    temperature: 0.7,
 };
 
-export const EMOTIONAL_VOICES: Record<string, PrebuiltVoice> = {
-    'Screaming': 'Shimmer',
-    'Whispering': 'Echo',
-    'Excited': 'Nova',
-    'Sad': 'WaveNet-D',
-    'Angry': 'Onyx',
+export const CHARACTER_VOICES: Record<string, VoiceProfile> = {
+    'Amalia': { voiceName: 'Luna', seed: 2345, temperature: 0.8 },
+    'Corvus': { voiceName: 'Onyx', seed: 3456, temperature: 0.6 },
+    'Seraphina': { voiceName: 'Nova', seed: 4567, temperature: 0.9 },
+    'Lysander': { voiceName: 'Echo', seed: 5678, temperature: 0.7 },
+    'Lilith': { voiceName: 'Comet', seed: 6789, temperature: 0.8 },
+    'Kaelen': { voiceName: 'Jupiter', seed: 7890, temperature: 0.7 },
+    'Welt': { voiceName: 'Zephyr', seed: 1234, temperature: 0.7 },
 };
 
-export const ALL_AVAILABLE_VOICES: PrebuiltVoice[] = [
-    "Echo", "Onyx", "Nova", "Shimmer", "Luna", "Comet", "Jupiter",
-    "WaveNet-A", "WaveNet-B", "WaveNet-C", "WaveNet-D", "WaveNet-E",
-    "WaveNet-F", "WaveNet-G", "WaveNet-H", "WaveNet-I", "WaveNet-J",
-    "Zephyr"
-];
+export const EMOTIONAL_VOICES: Record<string, Partial<VoiceProfile>> = {
+    'Screaming': { temperature: 1.0 },
+    'Whispering': { temperature: 0.4 },
+    'Excited': { temperature: 0.9 },
+    'Sad': { temperature: 0.5 },
+    'Angry': { temperature: 0.8 },
+};
