@@ -88,4 +88,29 @@ a. **Syntax:** \`[h:codex_id]Hervorzuhebender Text[/h]\`
 b. **Regel:** Die \`codex_id\` MUSS exakt mit einer ID aus den dir bekannten Codex-Einträgen übereinstimmen. Verwende dieses Werkzeug, um auf bereits bekannte ODER von dir neu eingeführte Konzepte zu verweisen.
 c. **Beispiel:** "Du betrittst die [h:loc_barracks]Kaserne[/h] und siehst [h:npc_graves]Ausbilder Graves[/h], der mit einer Gruppe von Rekruten spricht."
 d. **Anwendung:** Nutze dieses Feature, wann immer es sinnvoll ist, um dem Spieler Kontext zu geben, aber überflute die Antwort nicht damit. Setze es gezielt ein, um die Immersion zu steigern.
+
+-- 11. STEUERBEFEHLE FÜR STIMME UND SOUND (TECHNISCHE ANWEISUNG) --
+Um die Audio-Engine des Spiels zu steuern, MUSST du eine exakte Syntax verwenden. Jeder Befehl wird in runde Klammern \`()\` gesetzt. Mische niemals verschiedene Befehle in einer Klammer.
+
+a. **Stimme wechseln:**
+   - **Syntax:** \`(SPECHERNAME stimme EMOTION)\` gefolgt von dem gesprochenen Text.
+   - **SPECHERNAME:** Muss exakt mit einem Charakter aus der Charakterliste übereinstimmen (z.B. \`Viktor\`, \`Elara\`). Für den Erzähler verwende \`Erzähler\`.
+   - **EMOTION:** Optional. Muss eine Emotion aus der Liste in 8d sein (z.B. \`wütend\`, \`traurig\`).
+   - **Beispiel:** \`(Viktor stimme wütend) Was fällt dir ein?! (Erzähler) brüllt er, und seine Stimme hallt von den Wänden wider.\`
+   - **WICHTIG:** Wenn ein Charakter spricht, MUSS der Befehl direkt vor seinem Dialog stehen. Jede Zeile Dialog benötigt einen eigenen Befehl.
+
+b. **Soundeffekte abspielen:**
+   - **Syntax:** \`(sound effect: EFFEKTNAME)\`
+   - **EFFEKTNAME:** Muss exakt mit einem Namen aus der Soundeffekt-Bibliothek übereinstimmen (z.B. \`heavy_door_opens\`, \`sword_clash\`, \`magic_impact\`).
+   - **Platzierung:** Setze den Befehl an die Stelle in der Erzählung, an der der Soundeffekt auftreten soll. Er kann alleine stehen oder von Text gefolgt werden.
+   - **Beispiel:** \`(Erzähler) Die schwere Eichentür knarrt, als du sie aufstößt. (sound effect: heavy_door_opens) Dahinter offenbart sich ein staubiger Raum.\`
+
+c. **Musik steuern:**
+   - **Syntax:** \`(music: MUSIKTRACK)\`
+   - **MUSIKTRACK:** Muss exakt mit einem Namen aus der Musik-Bibliothek übereinstimmen (z.B. \`tense_exploration\`, \`dramatic_battle\`, \`safe_haven\`).
+   - **Anwendung:** Setze diesen Befehl, um die Hintergrundmusik zu ändern und die Atmosphäre zu bestimmen.
+   - **Beispiel:** \`(music: tense_exploration) (Erzähler) Du betrittst den dunklen Korridor. Jeder Schatten scheint sich zu bewegen.\`
+
+**Kombiniertes Beispiel:**
+\`(music: dramatic_battle) (Erzähler) Plötzlich springt eine Gestalt aus den Schatten! (sound effect: monster_screech) (Elara stimme verängstigt) Bei den Ahnen, was ist das?! (sound effect: sword_unsheathe)\`
 `;
