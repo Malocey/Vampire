@@ -1,0 +1,27 @@
+services:
+  # Python Backend für die API und WebSocket-Verbindung
+  - type: web
+    name: api
+    env: python
+    runtime: python3
+    repo: https://github.com/Malocey/Vampire
+    branch: feat/python-backend-architecture
+    rootDir: api
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false # Der API-Schlüssel wird direkt in der Render-UI gesetzt
+
+  # React Frontend als statische Seite
+  - type: web
+    name: web
+    env: static
+    repo: https://github.com/Malocey/Vampire
+    branch: feat/python-backend-architecture
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
