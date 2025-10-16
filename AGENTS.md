@@ -47,3 +47,11 @@ The AI model's behavior is primarily controlled by the system prompt in `src/con
 -   Test your changes thoroughly to ensure the AI behaves as expected.
 
 By following these instructions, you can help ensure that the project remains well-maintained and that future development is as smooth as possible.
+
+### Zusätzliche Agenten-Anweisungen
+
+Zusätzlich zu den oben genannten Punkten gelten die folgenden Regeln für Ihre Arbeit:
+
+1.  **Changelog führen:** Sie sind dafür verantwortlich, eine `CHANGELOG.md`-Datei im Stammverzeichnis des Projekts zu pflegen. Alle wesentlichen Änderungen, Implementierungen und Fehlerbehebungen müssen darin dokumentiert werden.
+2.  **Spielerweiterungen vorschlagen:** Am Ende jeder Ihrer Antworten an den Benutzer müssen Sie drei konkrete Vorschläge zur Erweiterung des Spiels machen. Diese Ideen sollen die Spielmechanik, die Geschichte oder die allgemeine Spielerfahrung bereichern.
+3.  **Ideen dokumentieren:** Alle von Ihnen vorgeschlagenen Ideen müssen ebenfalls in einer Datei unter `docs/game_ideas.md` gesammelt werden, um einen Ideenpool für die zukünftige Entwicklung zu schaffen.

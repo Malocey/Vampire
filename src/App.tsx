@@ -111,7 +111,13 @@ const App = () => {
         );
     }
 
-    return null;
+    // Fallback, to ensure something always renders, pointing to the logical start for a new user.
+    return (
+        <>
+            <DynamicBackground />
+            <IntroScreen />
+        </>
+    );
 };
 
 export default App;

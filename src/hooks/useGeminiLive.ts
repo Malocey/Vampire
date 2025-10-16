@@ -1,102 +1,68 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality, Blob, Type } from '@google/genai';
-import { ai, SYSTEM_INSTRUCTION } from '../config/api';
-import { VOICE_CHARACTERISTICS } from '../config/gameConfig';
-import { TranscriptEntry, PlayerData, CategorizedSuggestion, QuestObjective, CodexEntry, PrebuiltVoice, API_MODULES, VoiceProfile } from '../types';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { NARRATOR_VOICE, CHARACTER_VOICES, EMOTIONAL_VOICES } from '../config/voiceConfig';
-import { useApiStatusStore } from '../store/useApiStatusStore';
-import { isQuotaError } from '../utils/errorUtils';
-import { INITIAL_MAP_DATA } from '../config/mapData';
-import { parseSpeechCommands } from '../utils/speechParser';
-import { Howl } from 'howler';
-import { SFX_CONFIG, MUSIC_CONFIG } from '../config/soundConfig';
-import { getCachedAudio, cacheAudio } from '../utils/audioCache';
+import { TranscriptEntry } from '../types';
 
-function encode(bytes: Uint8Array) {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-function createBlob(data: ArrayBuffer): Blob {
-    const int16 = new Int16Array(data);
-    return {
-        data: encode(new Uint8Array(int16.buffer)),
-        mimeType: 'audio/pcm;rate=16000',
-    };
-}
-
-function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T | undefined>(undefined);
-  useEffect(() => {
-    ref.current = value;
-  });
-  return ref.current;
-}
+// Die URL unseres Python-Backends
+const WEBSOCKET_URL = 'ws://127.0.0.1:8000/ws';
 
 export const useGeminiLive = () => {
-    const { playerData, setPlayerData, updateTranscript } = usePlayerStore();
-    const { setModuleStatus } = useApiStatusStore();
-    const transcript = playerData?.transcript || [];
-    
+    const { updateTranscript } = usePlayerStore();
+    const transcript = usePlayerStore((state) => state.playerData?.transcript || []);
+
     const [isConnected, setIsConnected] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
-    const [isListening, setIsListening] = useState(false);
+    const [isListening, setIsListening] = useState(true); // Standardmäßig auf Zuhören
     const [isPaused, setIsPaused] = useState(false);
-    const [suggestions, setSuggestions] = useState<CategorizedSuggestion[]>([]);
-    const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
-    const [isProcessingText, setIsProcessingText] = useState(false);
 
-    const prevIsListening = usePrevious(isListening);
-
-    const sessionPromiseRef = useRef<ReturnType<typeof ai.live.connect> | null>(null);
+    const websocketRef = useRef<WebSocket | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const inputAudioContextRef = useRef<AudioContext | null>(null);
-    const outputAudioContextRef = useRef<AudioContext | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
     const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    
-    const isListeningRef = useRef(false);
-    const isPausedRef = useRef(false);
-    useEffect(() => { isPausedRef.current = isPaused }, [isPaused]);
-    
-    const nextStartTimeRef = useRef(0);
-    const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
+    const isListeningRef = useRef(true);
+    useEffect(() => { isListeningRef.current = isListening }, [isListening]);
+
+    // --- Sprachausgabe (Text-to-Speech) ---
+    const speak = useCallback((text: string, speaker: string, emotion: string) => {
+        if (isMuted) return;
+
+        const utterance = new SpeechSynthesisUtterance(text);
+
+        // Versuche, eine passende Stimme zu finden
+        const voices = window.speechSynthesis.getVoices();
+        let selectedVoice = voices.find(v => v.name.includes('Google') && v.lang.startsWith('de')); // Bevorzuge deutsche Google-Stimmen
+        if (speaker !== 'Narrator') {
+            // Einfache Logik, um für verschiedene Sprecher verschiedene Stimmen zu nutzen
+            // Dies kann in Zukunft durch eine komplexere Logik (z.B. über voiceConfig) ersetzt werden
+            const speakerVoices = voices.filter(v => v.lang.startsWith('de'));
+            const voiceIndex = Math.abs(speaker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % speakerVoices.length;
+            selectedVoice = speakerVoices[voiceIndex] || selectedVoice;
+        }
+
+        if (selectedVoice) {
+            utterance.voice = selectedVoice;
+        }
+
+        // Emotionen könnten hier die Tonhöhe (pitch) oder Geschwindigkeit (rate) beeinflussen
+        switch(emotion) {
+            case 'happy': utterance.pitch = 1.2; break;
+            case 'sad': utterance.pitch = 0.8; break;
+            case 'angry': utterance.rate = 1.2; utterance.pitch = 0.9; break;
+            case 'whispering': utterance.volume = 0.5; utterance.rate = 0.9; break;
+            default: break;
+        }
+
+        window.speechSynthesis.speak(utterance);
+    }, [isMuted]);
+
+
+    // --- Bereinigung der Ressourcen ---
     const cleanup = useCallback(() => {
+        if (websocketRef.current) {
+            websocketRef.current.close();
+            websocketRef.current = null;
+        }
         if (audioWorkletNodeRef.current) {
             audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: false });
             audioWorkletNodeRef.current.disconnect();
@@ -106,537 +72,185 @@ export const useGeminiLive = () => {
             mediaStreamSourceRef.current.disconnect();
             mediaStreamSourceRef.current = null;
         }
-        if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
-            inputAudioContextRef.current.close();
-        }
-        if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
-             outputAudioContextRef.current.close();
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+            audioContextRef.current.close();
         }
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
             streamRef.current = null;
         }
-        for (const source of audioSourcesRef.current.values()) {
-            source.stop();
-        }
-        audioSourcesRef.current.clear();
-        nextStartTimeRef.current = 0;
+        window.speechSynthesis.cancel(); // Stoppt alle laufenden Sprachausgaben
         setIsConnected(false);
         setIsListening(false);
-        setIsPaused(false);
-        setSuggestions([]);
         isListeningRef.current = false;
-        isPausedRef.current = false;
     }, []);
-    
+
+    // --- Sitzungssteuerung ---
     const stopSession = useCallback(() => {
-        if (sessionPromiseRef.current) {
-            sessionPromiseRef.current.then(session => {
-                session.close();
-            });
-            sessionPromiseRef.current = null;
-        }
         cleanup();
-    }, [cleanup]);
-
-    const generateSuggestions = useCallback(async (transcriptHistory: TranscriptEntry[]) => {
-        setIsGeneratingSuggestions(true);
-        setSuggestions([]);
-
-        const context = transcriptHistory
-            .filter(e => e.speaker !== 'system')
-            .slice(-4) 
-            .map(e => `${e.speaker === 'user' ? 'Kaelen' : 'Welt'}: ${e.text}`)
-            .join('\n');
-
-        if (!context) {
-            setIsGeneratingSuggestions(false);
-            return;
-        }
-
-        const prompt = `
-            Basierend auf dem folgenden Rollenspiel-Gesprächskontext, generiere 5 kurze, unterschiedliche Vorschläge, was der Spieler (Kaelen) als Nächstes sagen oder tun könnte.
-            Kategorisiere jeden Vorschlag als "Untersuchung" (für das Sammeln von Informationen), "Dialog" (für Gespräche) oder "Aktion" (für Handlungen).
-            Gib eine gute Mischung aus allen Kategorien, aber lege einen Schwerpunkt auf interaktive "Dialog"- und "Aktion"-Optionen.
-            Gib ein JSON-Array von Objekten zurück, jedes mit den Schlüsseln "text" und "category". Generiere nichts anderes.
-
-            Beispiel-Output:
-            [
-                {"text": "Schau dich im Raum um.", "category": "Untersuchung"},
-                {"text": "Wer sind Sie?", "category": "Dialog"},
-                {"text": "Versuche, die Tür zu öffnen.", "category": "Aktion"}
-            ]
-
-            Kontext:
-            ---
-            ${context}
-            ---
-        `;
-
-        try {
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: prompt,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                text: { type: Type.STRING },
-                                category: { type: Type.STRING, enum: ['Untersuchung', 'Dialog', 'Aktion'] }
-                            },
-                            required: ['text', 'category']
-                        }
-                    }
-                }
-            });
-            const suggestionsArray = JSON.parse(response.text);
-            setSuggestions(suggestionsArray);
-        } catch (error) {
-             if (isQuotaError(error)) {
-                setModuleStatus('suggestions', 'unavailable');
-            } else {
-                console.error("Failed to generate suggestions:", error);
-            }
-        } finally {
-            setIsGeneratingSuggestions(false);
-        }
-    }, [setModuleStatus]);
-    
-    useEffect(() => {
-        if (prevIsListening && !isListening && transcript.length > 0) {
-            const lastSpeaker = transcript[transcript.length - 1]?.speaker;
-            if ((lastSpeaker === 'user' || lastSpeaker === 'model') && !isProcessingText) {
-                 generateSuggestions(transcript);
-            }
-        }
-    }, [isListening, prevIsListening, transcript, generateSuggestions, isProcessingText]);
-
-    const updateNpcMemory = useCallback(async (conversation: TranscriptEntry[], npc: CodexEntry) => {
-        const currentPlayerData = usePlayerStore.getState().playerData;
-        if (!currentPlayerData) return;
-
-        const prompt = `
-            Du bist der NSC "${npc.title}". Basierend auf dem folgenden Dialog mit dem Spieler Kaelen, fasse deine wichtigsten Eindrücke und Erkenntnisse in einem kurzen Satz zusammen. Konzentriere dich auf deine Gefühle, dein Misstrauen, deine Neugier oder deine Absichten ihm gegenüber.
-
-            Dialog:
-            ${conversation.map(e => `${e.speaker === 'user' ? 'Kaelen' : npc.title}: ${e.text}`).join('\n')}
-
-            Deine Zusammenfassung (ein Satz):
-        `;
-
-        try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
-            const memory = response.text.trim();
-            const newPlayerData = JSON.parse(JSON.stringify(currentPlayerData));
-            newPlayerData.npcMemories[npc.id] = memory;
-            setPlayerData(newPlayerData);
-        } catch (error) {
-            if (isQuotaError(error)) {
-                setModuleStatus('memory', 'unavailable');
-            } else {
-                console.error(`Failed to update memory for ${npc.title}:`, error);
-            }
-        }
-    }, [setPlayerData, setModuleStatus]);
-
-    const processModelResponse = useCallback((text: string) => {
-        const currentPlayerData = usePlayerStore.getState().playerData;
-        if (!currentPlayerData) return;
-    
-        let updated = false;
-        const newPlayerData = JSON.parse(JSON.stringify(currentPlayerData));
-        const systemMessages: string[] = [];
-    
-        const createKeywordRegex = (keywords: string[]) => {
-            const escapedKeywords = keywords.map(kw => kw.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'));
-            return new RegExp(`\\b(${escapedKeywords.join('|')})\\b`, 'i');
-        };
-    
-        newPlayerData.codex.forEach((entry: CodexEntry) => {
-            if (!entry.unlocked) {
-                const regex = createKeywordRegex(entry.keywords);
-                if (regex.test(text)) {
-                    entry.unlocked = true;
-                    updated = true;
-                    systemMessages.push(`System: Datenbankeintrag freigeschaltet - ${entry.title}`);
-                }
-            }
-        });
-    
-        newPlayerData.mapData.forEach((location: any) => {
-            if (!location.discovered) {
-                const regex = createKeywordRegex(location.keywords);
-                if (regex.test(text)) {
-                    location.discovered = true;
-                    updated = true;
-                    systemMessages.push(`System: Neuer Ort auf der Karte entdeckt - ${location.name}`);
-                }
-            }
-        });
-    
-        newPlayerData.quests.forEach((quest: any) => {
-            if (quest.status === 'active') {
-                quest.objectives.forEach((objective: QuestObjective) => {
-                    if (!objective.completed && objective.trigger) {
-                        const [action, value] = objective.trigger.split(':');
-                        let conditionMet = false;
-    
-                        if (action === 'visit') {
-                            const location = INITIAL_MAP_DATA.find(loc => loc.id === value);
-                            if (location) {
-                                const locationRegex = createKeywordRegex(location.keywords);
-                                if (locationRegex.test(text)) {
-                                    conditionMet = true;
-                                }
-                            }
-                        }
-    
-                        if (conditionMet) {
-                            objective.completed = true;
-                            updated = true;
-                            systemMessages.push(`System: Quest-Ziel aktualisiert - "${objective.text}" abgeschlossen.`);
-                        }
-                    }
-                });
-            }
-        });
-    
-        if (updated) {
-            setPlayerData(newPlayerData);
-            if (systemMessages.length > 0) {
-                updateTranscript(prev => [
-                    ...prev,
-                    ...systemMessages.map(msg => ({ speaker: 'system', text: msg })) as TranscriptEntry[]
-                ]);
-            }
-        }
-    }, [setPlayerData, updateTranscript]);
-    
-    const togglePause = useCallback(() => {
-        setIsPaused(prev => {
-            const isNowPaused = !prev;
-            isPausedRef.current = isNowPaused;
-            if (isNowPaused) {
-                isListeningRef.current = false;
-                setIsListening(false);
-            } else {
-                isListeningRef.current = true;
-                setIsListening(true);
-            }
-            return isNowPaused;
-        });
-    }, []);
-
-    const selectSuggestion = useCallback(async (text: string) => {
-        if (isProcessingText) return;
-
-        setIsProcessingText(true);
-        let sessionWasPaused = false;
-        if (isConnected && !isPaused) {
-            togglePause();
-            sessionWasPaused = true;
-        }
-        
-        updateTranscript(prev => [...prev, { speaker: 'user', text }]);
-        setIsListening(false);
-        setSuggestions([]);
-
-        const history = [...transcript, { speaker: 'user', text }]
-            .filter(e => e.speaker !== 'system')
-            .map(e => `${e.speaker === 'user' ? 'Du sagst' : 'Die Welt antwortet'}: "${e.text}"`)
-            .join('\n');
-
-        let fullResponse = "";
-        try {
-            const responseStream = await ai.models.generateContentStream({
-                model: 'gemini-2.5-flash',
-                contents: `${SYSTEM_INSTRUCTION}\n\n**Bisheriger Gesprächsverlauf:**\n${history}\n\n**Deine nächste Antwort als Spielleiter:**`,
-            });
-
-            updateTranscript(prev => [...prev, { speaker: 'model', text: "" }]);
-
-            for await (const chunk of responseStream) {
-                const chunkText = chunk.text;
-                if (chunkText) {
-                    fullResponse += chunkText;
-                    updateTranscript(prev => {
-                        const last = prev[prev.length - 1];
-                        if (last && last.speaker === 'model') {
-                            last.text += chunkText;
-                            return [...prev.slice(0, -1), last];
-                        }
-                        return prev;
-                    });
-                }
-            }
-            
-            processModelResponse(fullResponse);
-            generateSuggestions([...transcript, { speaker: 'user', text }, { speaker: 'model', text: fullResponse }]);
-
-        } catch (error) {
-             if (isQuotaError(error)) {
-                setModuleStatus('narrative', 'unavailable');
-            } else {
-                console.error("Error during text-based interaction:", error);
-                updateTranscript(prev => [...prev, { speaker: 'system', text: 'Ein kritischer Systemfehler ist aufgetreten.' }]);
-            }
-        } finally {
-            setIsProcessingText(false);
-            if (sessionWasPaused) {
-                togglePause();
-            }
-        }
-
-    }, [isProcessingText, isConnected, isPaused, togglePause, transcript, processModelResponse, generateSuggestions, updateTranscript, setModuleStatus]);
+        updateTranscript(prev => [...prev, { speaker: 'system', text: 'Verbindung getrennt.' }]);
+    }, [cleanup, updateTranscript]);
 
     const startSession = useCallback(async () => {
-        const initialPlayerData = usePlayerStore.getState().playerData;
-        if (sessionPromiseRef.current || !initialPlayerData) {
-            return;
-        }
-        
-        setIsPaused(false);
-        isPausedRef.current = false;
-        updateTranscript(prev => [...prev, { speaker: 'system', text: 'Stelle Verbindung her...'}]);
+        if (websocketRef.current) return;
+
+        updateTranscript(() => [{ speaker: 'system', text: 'Stelle Verbindung zum Server her...' }]);
 
         try {
             streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
         } catch (error) {
-            console.error("Microphone access denied:", error);
-            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Mikrofonzugriff verweigert.'}]);
+            console.error("Mikrofonzugriff verweigert:", error);
+            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Mikrofonzugriff verweigert.' }]);
             return;
         }
         
-        inputAudioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
-        outputAudioContextRef.current = new window.AudioContext({ sampleRate: 24000 });
-
-        const fullTranscript = initialPlayerData.transcript.map(t => `${t.speaker}: ${t.text}`).join('\n');
-        let dynamicSystemInstruction = `${SYSTEM_INSTRUCTION}\n\n**Bisheriger Gesprächsverlauf:**\n${fullTranscript}`;
+        audioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
         
-        const npcCodex = initialPlayerData.codex.filter(c => c.category === 'Personen' && c.voice);
-        if (npcCodex.length > 0) {
-            let voiceProfiles = '\n\n-- Spezifische NPC-Stimmprofile --\n';
-            npcCodex.forEach(npc => {
-                 if (npc.voice && VOICE_CHARACTERISTICS[npc.voice.voiceName]) {
-                    const characteristic = VOICE_CHARACTERISTICS[npc.voice.voiceName];
-                    voiceProfiles += `- **${npc.title} (Stimme '${npc.voice.voiceName}'):** Nutze eine Stimme, die '${characteristic}' ist. Deine Darstellung muss den Charakterdetails entsprechen: "${npc.content}"\n`;
-                 }
-            });
-            dynamicSystemInstruction += voiceProfiles;
-        }
+        websocketRef.current = new WebSocket(WEBSOCKET_URL);
 
-        const memories = Object.entries(initialPlayerData.npcMemories);
-        if (memories.length > 0) {
-            const memoryLog = memories.map(([npcId, memory]) => {
-                const npcName = npcCodex.find(c => c.id === npcId)?.title || 'Unbekannt';
-                return `- ${npcName}: ${memory}`;
-            }).join('\n');
-            dynamicSystemInstruction += `\n\n-- Gedächtnisprotokolle --\n${memoryLog}`;
-        }
+        websocketRef.current.onopen = async () => {
+            setIsConnected(true);
+            setIsListening(true);
+            isListeningRef.current = true;
+            updateTranscript(prev => [...prev.filter(e => e.text !== 'Stelle Verbindung zum Server her...'), { speaker: 'system', text: 'Verbindung hergestellt. Du kannst sprechen.' }]);
 
+            // Audio-Worklet für die Mikrofonaufnahme einrichten
+            try {
+                if (!audioContextRef.current) return;
+                await audioContextRef.current.audioWorklet.addModule('audio-processor.js');
+                mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(streamRef.current!);
+                audioWorkletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
 
-        sessionPromiseRef.current = ai.live.connect({
-            model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-            callbacks: {
-                onopen: () => {
-                    updateTranscript(prev => [...prev.filter(e => e.text !== 'Stelle Verbindung her...'), { speaker: 'system', text: 'Verbindung hergestellt. Du kannst jetzt sprechen.'}]);
-                    setIsConnected(true);
-                    setIsListening(true);
-                    isListeningRef.current = true;
-
-                    if (!streamRef.current || !inputAudioContextRef.current) return;
-
-                    const setupAudio = async () => {
-                        try {
-                            if (!inputAudioContextRef.current) return;
-                            await inputAudioContextRef.current.audioWorklet.addModule('audio-processor.js');
-                            mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(streamRef.current!);
-                            audioWorkletNodeRef.current = new AudioWorkletNode(inputAudioContextRef.current, 'audio-processor');
-
-                            audioWorkletNodeRef.current.port.onmessage = (event) => {
-                                if (event.data.type === 'audioData' && isListeningRef.current) {
-                                    const pcmBlob = createBlob(event.data.data);
-                                    if (sessionPromiseRef.current) {
-                                        sessionPromiseRef.current.then((session) => {
-                                            session.sendRealtimeInput({ media: pcmBlob });
-                                        });
-                                    }
-                                }
-                            };
-
-                            audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: true });
-                            mediaStreamSourceRef.current.connect(audioWorkletNodeRef.current);
-                            audioWorkletNodeRef.current.connect(inputAudioContextRef.current.destination);
-                        } catch (e) {
-                            console.error('Error loading audio worklet module:', e);
-                            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Audiomodul konnte nicht geladen werden.' }]);
-                            stopSession();
-                        }
-                    };
-
-                    setupAudio();
-                },
-                onmessage: async (message: LiveServerMessage) => {
-                    const hasModelOutput = message.serverContent?.outputTranscription || message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-
-                    if (hasModelOutput && isListeningRef.current) {
-                        setIsListening(false);
-                        isListeningRef.current = false;
-                        setSuggestions([]);
+                // Nachrichten vom Audio-Worklet (Audiodaten) an das Backend senden
+                audioWorkletNodeRef.current.port.onmessage = (event) => {
+                    if (event.data.type === 'audioData' && isListeningRef.current && websocketRef.current?.readyState === WebSocket.OPEN) {
+                        websocketRef.current.send(event.data.data);
                     }
-                    if (message.serverContent?.inputTranscription) {
-                        const textChunk = message.serverContent.inputTranscription.text;
-                        updateTranscript(prev => {
-                            const lastEntry = prev[prev.length - 1];
-                            if (lastEntry && lastEntry.speaker === 'user') {
-                                const updatedLastEntry = { ...lastEntry, text: lastEntry.text + textChunk };
-                                return [...prev.slice(0, -1), updatedLastEntry];
-                            } else {
-                                return [...prev, { speaker: 'user', text: textChunk }];
-                            }
-                        });
-                    }
+                };
 
-                    if (message.serverContent?.outputTranscription) {
-                        const textChunk = message.serverContent.outputTranscription.text;
-                        updateTranscript(prev => {
-                            const lastEntry = prev[prev.length - 1];
-                            if (lastEntry && lastEntry.speaker === 'model') {
-                                const updatedLastEntry = { ...lastEntry, text: lastEntry.text + textChunk };
-                                return [...prev.slice(0, -1), updatedLastEntry];
-                            } else {
-                                return [...prev, { speaker: 'model', text: textChunk }];
-                            }
-                        });
-                    }
+                audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: true });
+                mediaStreamSourceRef.current.connect(audioWorkletNodeRef.current);
+                audioWorkletNodeRef.current.connect(audioContextRef.current.destination);
 
-                    if (message.serverContent?.turnComplete) {
-                        const { transcript: currentTranscript, playerData: currentPlayerData } = usePlayerStore.getState();
-                        const lastModelResponse = currentTranscript.find(e => e.speaker === 'model')?.text;
+                // Startsignal an den Server senden
+                websocketRef.current.send("START_SESSION");
 
-                        if (lastModelResponse && currentPlayerData) {
-                            const speechJobs = parseSpeechCommands(lastModelResponse);
-                            const session = await sessionPromiseRef.current;
-
-                            for (const job of speechJobs) {
-                                if (job.type === 'speech') {
-                                    session?.sendRealtimeInput({
-                                        text: job.text,
-                                        speechConfig: {
-                                            voiceConfig: { prebuiltVoiceConfig: job.voiceProfile },
-                                        },
-                                    });
-                                } else if (job.type === 'sfx') {
-                                    const cachedAudio = await getCachedAudio(SFX_CONFIG[job.effect]);
-                                    if (cachedAudio) {
-                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)] });
-                                        sound.play();
-                                    } else {
-                                        const sound = new Howl({ src: [SFX_CONFIG[job.effect]] });
-                                        sound.play();
-                                        const response = await fetch(SFX_CONFIG[job.effect]);
-                                        const blob = await response.blob();
-                                        await cacheAudio(SFX_CONFIG[job.effect], blob);
-                                    }
-                                } else if (job.type === 'music') {
-                                    const cachedAudio = await getCachedAudio(MUSIC_CONFIG[job.track]);
-                                    if (cachedAudio) {
-                                        const sound = new Howl({ src: [URL.createObjectURL(cachedAudio)], loop: true });
-                                        sound.play();
-                                    } else {
-                                        const sound = new Howl({ src: [MUSIC_CONFIG[job.track]], loop: true });
-                                        sound.play();
-                                        const response = await fetch(MUSIC_CONFIG[job.track]);
-                                        const blob = await response.blob();
-                                        await cacheAudio(MUSIC_CONFIG[job.track], blob);
-                                    }
-                                }
-                            }
-
-                            processModelResponse(lastModelResponse);
-
-                            const lastTurn = currentTranscript.slice(-2);
-                            const npcCodex = currentPlayerData.codex.filter(c => c.category === 'Personen');
-                            for (const npc of npcCodex) {
-                                if (new RegExp(`\\b${npc.title.split(' ')[1]}\\b`, 'i').test(lastModelResponse)) {
-                                    updateNpcMemory(lastTurn, npc);
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!isPausedRef.current) {
-                            setIsListening(true);
-                            isListeningRef.current = true;
-                        }
-                    }
-
-                    const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-                    if (audioData && outputAudioContextRef.current && !isMuted) {
-                        const outputCtx = outputAudioContextRef.current;
-                        const audioBuffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
-                        const source = outputCtx.createBufferSource();
-                        source.buffer = audioBuffer;
-                        source.connect(outputCtx.destination);
-
-                        const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-                        source.start(startTime);
-
-                        nextStartTimeRef.current = startTime + audioBuffer.duration;
-                        audioSourcesRef.current.add(source);
-
-                        source.addEventListener('ended', () => {
-                            audioSourcesRef.current.delete(source);
-                        });
-                    }
-                },
-                onerror: (e: ErrorEvent) => {
-                    console.error("WebSocket Error:", e);
-                    setModuleStatus('live', 'unavailable');
-                    stopSession();
-                },
-                onclose: (e: CloseEvent) => {
-                    updateTranscript(prev => [...prev.filter(e => e.speaker !== 'system'), { speaker: 'system', text: 'Verbindung getrennt.' }]);
-                    cleanup();
-                },
-            },
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: NARRATOR_VOICE },
-                },
-                inputAudioTranscription: {},
-                outputAudioTranscription: {},
-                systemInstruction: dynamicSystemInstruction,
-            },
-        });
-    }, [stopSession, isMuted, cleanup, processModelResponse, updateTranscript, updateNpcMemory, setModuleStatus]);
-
-    const toggleMute = useCallback(() => {
-        const newMutedState = !isMuted;
-        setIsMuted(newMutedState);
-        if (newMutedState) {
-            for (const source of audioSourcesRef.current.values()) {
-                source.stop();
-            }
-            audioSourcesRef.current.clear();
-            nextStartTimeRef.current = 0;
-        }
-    }, [isMuted]);
-    
-    useEffect(() => {
-        return () => {
-            if (isConnected) {
+            } catch (e) {
+                console.error('Fehler beim Laden des Audio-Worklets:', e);
+                updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Audiomodul konnte nicht geladen werden.' }]);
                 stopSession();
             }
         };
-    }, [isConnected, stopSession]);
 
-    return { isConnected, isMuted, isListening, isPaused, transcript, suggestions, startSession, stopSession, toggleMute, togglePause, selectSuggestion };
+        websocketRef.current.onmessage = (event) => {
+            try {
+                // Eingehende Nachrichten sind jetzt JSON-Objekte
+                const message = JSON.parse(event.data);
+
+                if (message.text) {
+                    setIsListening(false); // Aufhören zu lauschen, während die KI spricht
+
+                    // Update transcript
+                    updateTranscript(prev => [...prev, { speaker: 'model', text: message.text }]);
+
+                    // Speak the text
+                    const utterance = new SpeechSynthesisUtterance(message.text);
+                    const voices = window.speechSynthesis.getVoices();
+                    let selectedVoice = voices.find(v => v.name.includes('Google') && v.lang.startsWith('de'));
+                    if (message.speaker !== 'Narrator') {
+                        const speakerVoices = voices.filter(v => v.lang.startsWith('de'));
+                        const voiceIndex = Math.abs(message.speaker.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0)) % speakerVoices.length;
+                        selectedVoice = speakerVoices[voiceIndex] || selectedVoice;
+                    }
+                    if(selectedVoice) utterance.voice = selectedVoice;
+
+                    switch(message.emotion) {
+                        case 'happy': utterance.pitch = 1.2; break;
+                        case 'sad': utterance.pitch = 0.8; break;
+                        case 'angry': utterance.rate = 1.2; utterance.pitch = 0.9; break;
+                        case 'whispering': utterance.volume = 0.5; utterance.rate = 0.9; break;
+                        default: break;
+                    }
+
+                    // Wenn die Sprachausgabe beendet ist, wieder zuhören
+                    utterance.onend = () => {
+                         if (!isPaused) {
+                            setIsListening(true);
+                         }
+                    };
+                    window.speechSynthesis.speak(utterance);
+                }
+            } catch (error) {
+                // Fallback für nicht-JSON-Nachrichten (z.B. einfache Textnachrichten vom Server)
+                console.log("Received non-JSON message:", event.data);
+                if (typeof event.data === 'string') {
+                    updateTranscript(prev => [...prev, { speaker: 'model', text: event.data }]);
+                    speak(event.data, 'Narrator', 'neutral');
+                }
+            }
+        };
+
+        websocketRef.current.onerror = (error) => {
+            console.error("WebSocket Fehler:", error);
+            updateTranscript(prev => [...prev, { speaker: 'system', text: 'Ein Verbindungsfehler ist aufgetreten.' }]);
+            cleanup();
+        };
+
+        websocketRef.current.onclose = () => {
+            console.log("WebSocket-Verbindung geschlossen.");
+            cleanup();
+        };
+
+    }, [cleanup, isPaused, speak, stopSession, updateTranscript]);
+
+    const toggleMute = useCallback(() => {
+        setIsMuted(prev => !prev);
+        if (!isMuted) {
+            window.speechSynthesis.cancel();
+        }
+    }, [isMuted]);
+
+    const togglePause = useCallback(() => {
+        setIsPaused(prev => {
+            const isNowPaused = !prev;
+            setIsListening(!isNowPaused);
+            return isNowPaused;
+        });
+    }, []);
+
+    // Stellt sicher, dass die Sprachausgabe beim Verlassen der Komponente gestoppt wird
+    useEffect(() => {
+        // Lade die Stimmen vorab, um sicherzustellen, dass sie beim ersten `speak`-Aufruf verfügbar sind
+        window.speechSynthesis.getVoices();
+        return () => {
+            cleanup();
+        };
+    }, [cleanup]);
+
+    // Dummy-Funktion, da dies nun vom Backend gehandhabt wird
+    const selectSuggestion = (text: string) => {
+        console.warn("selectSuggestion wird nicht mehr vom Frontend gesteuert.");
+        // Zukünftig könnte dies eine Nachricht an das Backend senden, um eine Aktion auszulösen
+        updateTranscript(prev => [...prev, { speaker: 'user', text }]);
+        // Sende den Text via WebSocket an das Backend
+        if (websocketRef.current?.readyState === WebSocket.OPEN) {
+            // Wir müssen ein binäres Format für Sprache und ein Textformat für Texteingaben unterscheiden.
+            // Fürs Erste senden wir es einfach als Text. Das Backend muss dies behandeln können.
+            // websocketRef.current.send(text); // Dies würde eine Anpassung im Backend erfordern.
+        }
+    };
+
+    return {
+        isConnected,
+        isMuted,
+        isListening,
+        isPaused,
+        transcript,
+        suggestions: [], // Vorerst leere Vorschläge
+        startSession,
+        stopSession,
+        toggleMute,
+        togglePause,
+        selectSuggestion
+    };
 };
