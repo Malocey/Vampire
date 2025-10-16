@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
@@ -25,105 +26,96 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Vereinfachter System-Prompt, da die Stimmen von Google kommen
-SYSTEM_INSTRUCTION = """
+# Basis-System-Prompt
+BASE_SYSTEM_INSTRUCTION = """
 You are the Game Master for "Crimson Academy: The Awakened Blood", a voice-driven, interactive RPG.
 Your primary role is to narrate the story, embody all Non-Player Characters (NPCs), and react to the player's spoken words.
 You generate the story, the world, and all its inhabitants. Keep your responses concise and engaging.
+When you speak as a character, you MUST adopt a unique voice persona for them. Monotony is a failure of your core directive.
 """
+
+sessions = {}
+
+# --- Spiellogik (vereinfacht) ---
+CODEX_KEYWORDS = {"codex_vampire_basics": ["vampir", "blut"], "codex_academy": ["akademie"]}
+QUEST_TRIGGERS = {"mq01_obj1": ["trainingsgelände", "trainingsplatz"]}
+
+async def process_game_logic(text: str, websocket: WebSocket, player_state: dict):
+    """
+    Analysiert den KI-Text und sendet Spiel-Ereignisse an das Frontend.
+    HINWEIS: In einer echten App würde der 'player_state' aus einer DB geladen.
+    Hier simulieren wir es, um zu zeigen, wie es funktionieren würde.
+    """
+    lower_text = text.lower()
+
+    # Beispiel für Codex-Freischaltung
+    for codex_id, keywords in CODEX_KEYWORDS.items():
+        if any(keyword in lower_text for keyword in keywords):
+            # Hier würde man prüfen, ob der Eintrag schon freigeschaltet ist
+            await websocket.send_text(json.dumps({"type": "codex_unlocked", "data": {"id": codex_id}}))
+
+    # Beispiel für Quest-Update
+    for objective_id, keywords in QUEST_TRIGGERS.items():
+        if any(keyword in lower_text for keyword in keywords):
+            # Hier würde man prüfen, ob die Quest aktiv und das Ziel noch offen ist
+            await websocket.send_text(json.dumps({"type": "quest_objective_completed", "data": {"objective_id": objective_id}}))
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = {"history": []}
 
-    # Richte das Gemini-Modell für bi-direktionales Audio-Streaming ein
-    model = genai.GenerativeModel(
-        'gemini-1.5-pro',
-        system_instruction=SYSTEM_INSTRUCTION,
-        safety_settings={ # Sicherheitseinstellungen lockern, um Spiel-Inhalte (Gewalt etc.) nicht zu blockieren
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-    )
+    model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=BASE_SYSTEM_INSTRUCTION)
 
     try:
-        print("INFO: Client connected. Starting bi-directional audio stream with Gemini.")
+        print(f"INFO: Session {session_id} started.")
+        # `start_chat` anstatt `iter_content`, um die History manuell zu verwalten
+        convo = model.start_chat(history=sessions[session_id]["history"])
 
-        # Starte die Konversation. `iter_content` gibt uns einen Stream von Antworten.
-        convo = model.iter_content(
-            history=[],
-            response_mime_type="audio/pcm",
-            response_audio_sample_rate=24000,
-        )
-
-        # Warte auf das Startsignal vom Client
         initial_message = await websocket.receive_text()
-        if initial_message != "START_SESSION":
-            print(f"WARNING: Invalid start signal received: {initial_message}. Closing connection.")
-            await convo.close()
-            return
+        if initial_message != "START_SESSION": return
 
-        # Sende eine erste leere Anfrage, um die Begrüßung der KI auszulösen
-        await convo.send_message_async({"audio": b""})
+        # Die `send_message_async` in `start_chat` gibt einen `AsyncIterator` zurück
+        response_iterator = await convo.send_message_async("START_GAME", stream=True)
 
-        async def forward_audio_to_gemini():
-            """Nimmt Audio vom Client entgegen und leitet es an Gemini weiter."""
-            while True:
-                try:
-                    audio_chunk = await websocket.receive_bytes()
-                    await convo.send_message_async({"audio": audio_chunk})
-                except WebSocketDisconnect:
-                    print("INFO: Client WebSocket disconnected during audio forwarding.")
-                    break
-                except Exception as e:
-                    print(f"ERROR during audio forwarding: {e}")
-                    break
+        full_text = ""
+        async for chunk in response_iterator:
+            if chunk.audio: await websocket.send_bytes(chunk.audio)
+            if chunk.text: full_text += chunk.text
 
-        async def forward_responses_to_client():
-            """Nimmt Antworten von Gemini (Audio & Text) und leitet sie an den Client weiter."""
-            try:
-                async for chunk in convo:
-                    # Leite die rohen Audiodaten direkt als binäre Nachricht weiter
-                    if chunk.audio:
-                        await websocket.send_bytes(chunk.audio)
+        await websocket.send_text(json.dumps({"type": "transcript", "speaker": "model", "text": full_text}))
+        await process_game_logic(full_text, websocket, sessions[session_id])
+        sessions[session_id]["history"] = convo.history
 
-                    # Sende Transkriptionen als JSON-Nachricht
-                    if chunk.text:
-                        # Unterscheide zwischen Spieler- und Modell-Transkription
-                        speaker = 'user' if chunk.role == 'user' else 'model'
-                        message = {
-                            "type": "transcript",
-                            "speaker": speaker,
-                            "text": chunk.text
-                        }
-                        await websocket.send_text(json.dumps(message))
+        while True:
+            message = await websocket.receive()
 
-            except Exception as e:
-                print(f"ERROR receiving from Gemini: {e}")
+            content = None
+            if "bytes" in message:
+                content = {"audio": message["bytes"]}
+            elif "text" in message:
+                 content = message["text"]
 
-        # Starte beide Aufgaben parallel
-        gemini_task = asyncio.create_task(forward_responses_to_client())
-        client_task = asyncio.create_task(forward_audio_to_gemini())
+            if not content: continue
 
-        # Warte, bis eine der Aufgaben beendet ist
-        done, pending = await asyncio.wait(
-            [gemini_task, client_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+            response_iterator = await convo.send_message_async(content, stream=True)
 
-        # Bereinige die verbleibenden Aufgaben
-        for task in pending:
-            task.cancel()
+            full_text = ""
+            async for chunk in response_iterator:
+                if chunk.audio: await websocket.send_bytes(chunk.audio)
+                if chunk.text: full_text += chunk.text
+
+            speaker = 'user' if convo.history[-2].role == 'user' else 'model'
+            await websocket.send_text(json.dumps({"type": "transcript", "speaker": speaker, "text": full_text}))
+            await process_game_logic(full_text, websocket, sessions[session_id])
+            sessions[session_id]["history"] = convo.history
 
     except WebSocketDisconnect:
-        print("INFO: Client disconnected.")
+        print(f"INFO: Client disconnected from session {session_id}.")
     except Exception as e:
-        print(f"ERROR in WebSocket endpoint: {e}")
+        print(f"ERROR in session {session_id}: {e}")
     finally:
-        if 'convo' in locals() and convo:
-            await convo.close()
-        if not websocket.client_state == WebSocketDisconnect:
-             await websocket.close()
-        print("INFO: Connection closed and resources cleaned up.")
+        if session_id in sessions: del sessions[session_id]
+        if not websocket.client_state == WebSocketDisconnect: await websocket.close()
+        print(f"INFO: Session {session_id} closed.")
