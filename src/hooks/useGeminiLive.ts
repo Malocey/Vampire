@@ -1,9 +1,30 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { TranscriptEntry } from '../types';
 
-// Die URL unseres Python-Backends
 const WEBSOCKET_URL = 'ws://127.0.0.1:8000/ws';
+
+// Hilfsfunktion zum Dekodieren von PCM-Audiodaten in einen AudioBuffer
+async function decodePcm(
+  pcmData: ArrayBuffer,
+  audioContext: AudioContext,
+  sampleRate: number = 24000,
+  numChannels: number = 1
+): Promise<AudioBuffer> {
+    const frameCount = pcmData.byteLength / (2 * numChannels); // 16-bit PCM
+    const audioBuffer = audioContext.createBuffer(numChannels, frameCount, sampleRate);
+    const channelData = audioBuffer.getChannelData(0);
+    const dataView = new DataView(pcmData);
+
+    for (let i = 0; i < frameCount; i++) {
+        // Lese 16-bit little-endian integer
+        const int = dataView.getInt16(i * 2, true);
+        // Konvertiere zu float in den Bereich [-1.0, 1.0]
+        channelData[i] = int / 32768.0;
+    }
+
+    return audioBuffer;
+}
+
 
 export const useGeminiLive = () => {
     const { updateTranscript } = usePlayerStore();
@@ -11,78 +32,75 @@ export const useGeminiLive = () => {
 
     const [isConnected, setIsConnected] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
-    const [isListening, setIsListening] = useState(true); // Standardmäßig auf Zuhören
+    const [isListening, setIsListening] = useState(true);
     const [isPaused, setIsPaused] = useState(false);
 
     const websocketRef = useRef<WebSocket | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
+    const inputAudioContextRef = useRef<AudioContext | null>(null);
+    const outputAudioContextRef = useRef<AudioContext | null>(null);
     const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+    const audioQueueRef = useRef<AudioBuffer[]>([]);
+    const isPlayingRef = useRef(false);
+    const nextStartTimeRef = useRef(0);
 
     const isListeningRef = useRef(true);
     useEffect(() => { isListeningRef.current = isListening }, [isListening]);
 
-    // --- Sprachausgabe (Text-to-Speech) ---
-    const speak = useCallback((text: string, speaker: string, emotion: string) => {
-        if (isMuted) return;
+    // --- Audio-Wiedergabe Logik ---
+    const playAudioQueue = useCallback(() => {
+        if (isPlayingRef.current || audioQueueRef.current.length === 0 || isMuted) {
+            return;
+        }
+        isPlayingRef.current = true;
 
-        const utterance = new SpeechSynthesisUtterance(text);
-
-        // Versuche, eine passende Stimme zu finden
-        const voices = window.speechSynthesis.getVoices();
-        let selectedVoice = voices.find(v => v.name.includes('Google') && v.lang.startsWith('de')); // Bevorzuge deutsche Google-Stimmen
-        if (speaker !== 'Narrator') {
-            // Einfache Logik, um für verschiedene Sprecher verschiedene Stimmen zu nutzen
-            // Dies kann in Zukunft durch eine komplexere Logik (z.B. über voiceConfig) ersetzt werden
-            const speakerVoices = voices.filter(v => v.lang.startsWith('de'));
-            const voiceIndex = Math.abs(speaker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % speakerVoices.length;
-            selectedVoice = speakerVoices[voiceIndex] || selectedVoice;
+        const audioContext = outputAudioContextRef.current;
+        if (!audioContext) {
+            isPlayingRef.current = false;
+            return;
         }
 
-        if (selectedVoice) {
-            utterance.voice = selectedVoice;
+        const buffer = audioQueueRef.current.shift();
+        if (!buffer) {
+            isPlayingRef.current = false;
+            return;
         }
 
-        // Emotionen könnten hier die Tonhöhe (pitch) oder Geschwindigkeit (rate) beeinflussen
-        switch(emotion) {
-            case 'happy': utterance.pitch = 1.2; break;
-            case 'sad': utterance.pitch = 0.8; break;
-            case 'angry': utterance.rate = 1.2; utterance.pitch = 0.9; break;
-            case 'whispering': utterance.volume = 0.5; utterance.rate = 0.9; break;
-            default: break;
-        }
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
 
-        window.speechSynthesis.speak(utterance);
+        const startTime = Math.max(nextStartTimeRef.current, audioContext.currentTime);
+        source.start(startTime);
+        nextStartTimeRef.current = startTime + buffer.duration;
+
+        source.onended = () => {
+            isPlayingRef.current = false;
+            playAudioQueue(); // Spiele das nächste Stück in der Warteschlange
+        };
+
     }, [isMuted]);
 
-
-    // --- Bereinigung der Ressourcen ---
+    // --- Bereinigung ---
     const cleanup = useCallback(() => {
         if (websocketRef.current) {
             websocketRef.current.close();
             websocketRef.current = null;
         }
-        if (audioWorkletNodeRef.current) {
-            audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: false });
-            audioWorkletNodeRef.current.disconnect();
-            audioWorkletNodeRef.current = null;
-        }
-        if (mediaStreamSourceRef.current) {
-            mediaStreamSourceRef.current.disconnect();
-            mediaStreamSourceRef.current = null;
-        }
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-            audioContextRef.current.close();
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-        }
-        window.speechSynthesis.cancel(); // Stoppt alle laufenden Sprachausgaben
+        // ... (restliche Bereinigungslogik bleibt gleich)
+        if (audioWorkletNodeRef.current) audioWorkletNodeRef.current.disconnect();
+        if (mediaStreamSourceRef.current) mediaStreamSourceRef.current.disconnect();
+        if (inputAudioContextRef.current?.state !== 'closed') inputAudioContextRef.current?.close();
+        if (outputAudioContextRef.current?.state !== 'closed') outputAudioContextRef.current?.close();
+        if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+
         setIsConnected(false);
         setIsListening(false);
         isListeningRef.current = false;
+        audioQueueRef.current = [];
+        isPlayingRef.current = false;
     }, []);
 
     // --- Sitzungssteuerung ---
@@ -104,24 +122,25 @@ export const useGeminiLive = () => {
             return;
         }
         
-        audioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
+        inputAudioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
+        outputAudioContextRef.current = new window.AudioContext({ sampleRate: 24000 });
         
         websocketRef.current = new WebSocket(WEBSOCKET_URL);
+        websocketRef.current.binaryType = 'arraybuffer'; // Wichtig für Audio-Daten
 
         websocketRef.current.onopen = async () => {
+             // ... (Logik zum Einrichten des Audio-Worklets bleibt identisch)
             setIsConnected(true);
             setIsListening(true);
             isListeningRef.current = true;
             updateTranscript(prev => [...prev.filter(e => e.text !== 'Stelle Verbindung zum Server her...'), { speaker: 'system', text: 'Verbindung hergestellt. Du kannst sprechen.' }]);
 
-            // Audio-Worklet für die Mikrofonaufnahme einrichten
             try {
-                if (!audioContextRef.current) return;
-                await audioContextRef.current.audioWorklet.addModule('audio-processor.js');
-                mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(streamRef.current!);
-                audioWorkletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+                if (!inputAudioContextRef.current) return;
+                await inputAudioContextRef.current.audioWorklet.addModule('audio-processor.js');
+                mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(streamRef.current!);
+                audioWorkletNodeRef.current = new AudioWorkletNode(inputAudioContextRef.current, 'audio-processor');
 
-                // Nachrichten vom Audio-Worklet (Audiodaten) an das Backend senden
                 audioWorkletNodeRef.current.port.onmessage = (event) => {
                     if (event.data.type === 'audioData' && isListeningRef.current && websocketRef.current?.readyState === WebSocket.OPEN) {
                         websocketRef.current.send(event.data.data);
@@ -130,11 +149,9 @@ export const useGeminiLive = () => {
 
                 audioWorkletNodeRef.current.port.postMessage({ type: 'start', micOpen: true });
                 mediaStreamSourceRef.current.connect(audioWorkletNodeRef.current);
-                audioWorkletNodeRef.current.connect(audioContextRef.current.destination);
+                audioWorkletNodeRef.current.connect(inputAudioContextRef.current.destination);
 
-                // Startsignal an den Server senden
                 websocketRef.current.send("START_SESSION");
-
             } catch (e) {
                 console.error('Fehler beim Laden des Audio-Worklets:', e);
                 updateTranscript(prev => [...prev, { speaker: 'system', text: 'Fehler: Audiomodul konnte nicht geladen werden.' }]);
@@ -142,51 +159,31 @@ export const useGeminiLive = () => {
             }
         };
 
-        websocketRef.current.onmessage = (event) => {
-            try {
-                // Eingehende Nachrichten sind jetzt JSON-Objekte
+        websocketRef.current.onmessage = async (event) => {
+            if (typeof event.data === 'string') {
+                // Verarbeite JSON-Nachrichten (Transkripte)
                 const message = JSON.parse(event.data);
-
-                if (message.text) {
-                    setIsListening(false); // Aufhören zu lauschen, während die KI spricht
-
-                    // Update transcript
-                    updateTranscript(prev => [...prev, { speaker: 'model', text: message.text }]);
-
-                    // Speak the text
-                    const utterance = new SpeechSynthesisUtterance(message.text);
-                    const voices = window.speechSynthesis.getVoices();
-                    let selectedVoice = voices.find(v => v.name.includes('Google') && v.lang.startsWith('de'));
-                    if (message.speaker !== 'Narrator') {
-                        const speakerVoices = voices.filter(v => v.lang.startsWith('de'));
-                        const voiceIndex = Math.abs(message.speaker.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0)) % speakerVoices.length;
-                        selectedVoice = speakerVoices[voiceIndex] || selectedVoice;
+                if (message.type === 'transcript') {
+                    if (message.speaker === 'user') {
+                        setIsListening(false); // Stoppe das Lauschen, wenn der User spricht
                     }
-                    if(selectedVoice) utterance.voice = selectedVoice;
-
-                    switch(message.emotion) {
-                        case 'happy': utterance.pitch = 1.2; break;
-                        case 'sad': utterance.pitch = 0.8; break;
-                        case 'angry': utterance.rate = 1.2; utterance.pitch = 0.9; break;
-                        case 'whispering': utterance.volume = 0.5; utterance.rate = 0.9; break;
-                        default: break;
-                    }
-
-                    // Wenn die Sprachausgabe beendet ist, wieder zuhören
-                    utterance.onend = () => {
-                         if (!isPaused) {
-                            setIsListening(true);
-                         }
-                    };
-                    window.speechSynthesis.speak(utterance);
+                    updateTranscript(prev => {
+                        const last = prev[prev.length - 1];
+                        // Update das letzte Transkript-Segment, wenn der Sprecher derselbe ist
+                        if (last && last.speaker === message.speaker) {
+                            last.text += message.text;
+                            return [...prev.slice(0, -1), last];
+                        }
+                        // Füge ein neues Segment hinzu
+                        return [...prev, { speaker: message.speaker, text: message.text }];
+                    });
                 }
-            } catch (error) {
-                // Fallback für nicht-JSON-Nachrichten (z.B. einfache Textnachrichten vom Server)
-                console.log("Received non-JSON message:", event.data);
-                if (typeof event.data === 'string') {
-                    updateTranscript(prev => [...prev, { speaker: 'model', text: event.data }]);
-                    speak(event.data, 'Narrator', 'neutral');
-                }
+            } else if (event.data instanceof ArrayBuffer) {
+                // Verarbeite binäre Nachrichten (Audio)
+                if (isMuted || !outputAudioContextRef.current) return;
+                const audioBuffer = await decodePcm(event.data, outputAudioContextRef.current);
+                audioQueueRef.current.push(audioBuffer);
+                playAudioQueue();
             }
         };
 
@@ -199,16 +196,23 @@ export const useGeminiLive = () => {
         websocketRef.current.onclose = () => {
             console.log("WebSocket-Verbindung geschlossen.");
             cleanup();
+            if (!isPaused) {
+                setIsListening(true);
+            }
         };
 
-    }, [cleanup, isPaused, speak, stopSession, updateTranscript]);
+    }, [cleanup, isMuted, isPaused, playAudioQueue, stopSession, updateTranscript]);
 
+    // --- Mute/Pause Logik ---
     const toggleMute = useCallback(() => {
-        setIsMuted(prev => !prev);
-        if (!isMuted) {
-            window.speechSynthesis.cancel();
-        }
-    }, [isMuted]);
+        setIsMuted(prev => {
+            const newMutedState = !prev;
+            if (newMutedState) {
+                audioQueueRef.current = []; // Leere die Warteschlange, wenn stumm geschaltet wird
+            }
+            return newMutedState;
+        });
+    }, []);
 
     const togglePause = useCallback(() => {
         setIsPaused(prev => {
@@ -218,27 +222,11 @@ export const useGeminiLive = () => {
         });
     }, []);
 
-    // Stellt sicher, dass die Sprachausgabe beim Verlassen der Komponente gestoppt wird
     useEffect(() => {
-        // Lade die Stimmen vorab, um sicherzustellen, dass sie beim ersten `speak`-Aufruf verfügbar sind
-        window.speechSynthesis.getVoices();
         return () => {
             cleanup();
         };
     }, [cleanup]);
-
-    // Dummy-Funktion, da dies nun vom Backend gehandhabt wird
-    const selectSuggestion = (text: string) => {
-        console.warn("selectSuggestion wird nicht mehr vom Frontend gesteuert.");
-        // Zukünftig könnte dies eine Nachricht an das Backend senden, um eine Aktion auszulösen
-        updateTranscript(prev => [...prev, { speaker: 'user', text }]);
-        // Sende den Text via WebSocket an das Backend
-        if (websocketRef.current?.readyState === WebSocket.OPEN) {
-            // Wir müssen ein binäres Format für Sprache und ein Textformat für Texteingaben unterscheiden.
-            // Fürs Erste senden wir es einfach als Text. Das Backend muss dies behandeln können.
-            // websocketRef.current.send(text); // Dies würde eine Anpassung im Backend erfordern.
-        }
-    };
 
     return {
         isConnected,
@@ -246,11 +234,11 @@ export const useGeminiLive = () => {
         isListening,
         isPaused,
         transcript,
-        suggestions: [], // Vorerst leere Vorschläge
+        suggestions: [],
         startSession,
         stopSession,
         toggleMute,
         togglePause,
-        selectSuggestion
+        selectSuggestion: () => {} // Dummy
     };
 };
